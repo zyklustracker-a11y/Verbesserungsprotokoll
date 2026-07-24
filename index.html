@@ -357,12 +357,43 @@
   /* Konzept / Prompt: Popup */
   .modal.wide{max-width:680px;}
   .modal.wide .modal-actions{flex-wrap:wrap;}
+
+  /* Sticky Kopfzeile mit Titel + Kopieren-Button (bleibt beim Scrollen sichtbar) */
+  .cp-head{
+    position:sticky;
+    top:0;
+    z-index:2;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    background:var(--ink-bg-raised);
+    border-bottom:1px solid var(--hairline);
+    margin:-28px -28px 20px;
+    padding:18px 28px;
+  }
+  .cp-head h2{margin:0;}
+  .cp-copy-head{
+    height:44px;
+    min-width:44px;
+    padding:0 16px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    gap:8px;
+    flex-shrink:0;
+    font-size:13px;
+  }
+  .cp-copy-head .cp-copy-ico{font-size:16px;line-height:1;}
+  .cp-copy-head.copied{background:var(--sage);color:#1b1d21;}
+  .cp-copy-head.failed{background:var(--danger);color:#f4efe9;}
+
   .cp-meta{
     font-family:'IBM Plex Mono',monospace;
     font-size:11.5px;
     line-height:1.5;
     color:var(--paper-text-dim);
-    margin:-14px 0 20px;
+    margin:0 0 20px;
     word-break:break-word;
   }
   .cp-content{
@@ -443,6 +474,8 @@
     .home-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:11px;}
     form.add-row{flex-direction:column;}
     form.add-row .btn{width:100%;}
+    .cp-copy-head{width:44px;padding:0;}
+    .cp-copy-head .cp-copy-txt{display:none;}
   }
 </style>
 </head>
@@ -834,26 +867,47 @@
   }
 
   // ── Konzept / Prompt Speicher (Popup pro App-Idee) ─────────
-  function copyToClipboard(txt){
-    return new Promise((resolve)=>{
-      if(navigator.clipboard && navigator.clipboard.writeText){
-        navigator.clipboard.writeText(txt).then(()=>resolve(true)).catch(()=>resolve(fallbackCopy(txt)));
-      } else {
-        resolve(fallbackCopy(txt));
+  // Gemeinsame Kopierlogik: MUSS synchron im Klick-Handler starten
+  // (iOS Safari verweigert Clipboard-Zugriff nach await/setTimeout).
+  function copyTextSync(txt){
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      try{
+        const p = navigator.clipboard.writeText(txt);
+        if(p && typeof p.then==='function'){
+          return p.then(()=>true).catch(()=>fallbackCopy(txt));
+        }
+        return Promise.resolve(true);
+      }catch(err){
+        return Promise.resolve(fallbackCopy(txt));
       }
-    });
+    }
+    return Promise.resolve(fallbackCopy(txt));
   }
+  // Fallback ohne Clipboard-API – auf iOS zuverlässig via Range + contentEditable.
   function fallbackCopy(txt){
+    let ok=false;
+    const ta = document.createElement('textarea');
+    ta.value = txt;
+    ta.setAttribute('readonly','');
+    ta.contentEditable = 'true';
+    ta.style.position='fixed';
+    ta.style.top='0'; ta.style.left='0';
+    ta.style.width='1px'; ta.style.height='1px';
+    ta.style.padding='0'; ta.style.border='none';
+    ta.style.opacity='0';
+    document.body.appendChild(ta);
     try{
-      const tmp = document.createElement('textarea');
-      tmp.value = txt;
-      tmp.style.position='fixed'; tmp.style.top='-1000px'; tmp.style.opacity='0';
-      document.body.appendChild(tmp);
-      tmp.focus(); tmp.select();
-      const ok = document.execCommand('copy');
-      document.body.removeChild(tmp);
-      return ok;
-    }catch(err){ console.error(err); alert('Kopieren nicht möglich.'); return false; }
+      const range = document.createRange();
+      range.selectNodeContents(ta);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      ta.setSelectionRange(0, txt.length);
+      ok = document.execCommand('copy');
+      sel.removeAllRanges();
+    }catch(err){ console.error(err); ok=false; }
+    document.body.removeChild(ta);
+    return ok;
   }
 
   function openCpModal(id, data, field){
@@ -871,21 +925,50 @@
     const snippet = (data.text||'').replace(/\s+/g,' ').trim();
     const metaText = snippet.length>80 ? snippet.slice(0,80)+'…' : snippet;
 
+    // Kopfzeile: Titel links, zusätzlicher Kopieren-Button rechts (sticky).
+    const headCopyBtn = el('button',{class:'btn cp-copy-head',type:'button',
+      title:'Kompletten Text kopieren','aria-label':'Kompletten Text kopieren'});
+    headCopyBtn.innerHTML = '<span class="cp-copy-ico" aria-hidden="true">⧉</span><span class="cp-copy-txt">Kopieren</span>';
+    headCopyBtn.addEventListener('click',()=>runCopyOn(headCopyBtn));
+    const head = el('div',{class:'cp-head'},[ el('h2',{text:title}), headCopyBtn ]);
+
     const contentWrap = el('div');
     const actions = el('div',{class:'modal-actions'});
-    modal.appendChild(el('h2',{text:title}));
+    modal.appendChild(head);
     modal.appendChild(el('div',{class:'cp-meta',text:'Zur Idee: '+(metaText||'(ohne Text)')}));
     modal.appendChild(contentWrap);
     modal.appendChild(actions);
 
-    function flashCopied(){
-      if(!copyBtnRef) return;
-      copyBtnRef.textContent='Kopiert ✓';
-      const b = copyBtnRef;
-      setTimeout(()=>{ if(b) b.textContent='Kopieren'; },1500);
+    // Kopier-Feedback: Beschriftung/Farbe kurz umschalten, dann zurücksetzen.
+    function flashBtn(btn, success){
+      if(!btn) return;
+      if(btn._flashTimer) clearTimeout(btn._flashTimer);
+      if(btn._origHtml==null) btn._origHtml = btn.innerHTML;
+      const isHead = btn.classList.contains('cp-copy-head');
+      if(success){
+        btn.innerHTML = isHead
+          ? '<span class="cp-copy-ico" aria-hidden="true">✓</span><span class="cp-copy-txt">Kopiert</span>'
+          : 'Kopiert ✓';
+        btn.classList.add('copied');
+      }else{
+        btn.innerHTML = isHead
+          ? '<span class="cp-copy-ico" aria-hidden="true">✕</span><span class="cp-copy-txt">Fehler</span>'
+          : 'Fehlgeschlagen';
+        btn.classList.add('failed');
+      }
+      btn._flashTimer = setTimeout(()=>{
+        if(btn._origHtml!=null){ btn.innerHTML = btn._origHtml; btn._origHtml=null; }
+        btn.classList.remove('copied','failed');
+        btn._flashTimer=null;
+      },1500);
     }
-    function runCopy(){
-      copyToClipboard(current).then(ok=>{ if(ok!==false) flashCopied(); });
+    // Startet den Kopiervorgang synchron (Pflicht für iOS) und meldet danach das Ergebnis.
+    function runCopyOn(btn){
+      if(!current) return;
+      copyTextSync(current).then(ok=>{ flashBtn(btn, ok!==false); });
+    }
+    function refreshCopyBtns(){
+      headCopyBtn.disabled = !(current && current.length);
     }
 
     function close(){
@@ -906,10 +989,11 @@
       }
       copyBtnRef = el('button',{class:'btn',text:'Kopieren'});
       copyBtnRef.disabled = !(current && current.length);
-      copyBtnRef.addEventListener('click',runCopy);
+      copyBtnRef.addEventListener('click',()=>runCopyOn(copyBtnRef));
       actions.appendChild(copyBtnRef);
       actions.appendChild(el('button',{class:'btn ghost',text:'Bearbeiten',onclick:renderEdit}));
       actions.appendChild(el('button',{class:'btn ghost',text:'Schließen',onclick:close}));
+      refreshCopyBtns();
     }
 
     function renderEdit(){
@@ -940,6 +1024,7 @@
       });
       actions.appendChild(saveBtn);
       actions.appendChild(cancelBtn);
+      refreshCopyBtns();
       ta.focus();
     }
 
@@ -951,7 +1036,7 @@
         const inField = ae && (ae.tagName==='TEXTAREA' || ae.tagName==='INPUT');
         if(!sel && !inField && current){
           e.preventDefault();
-          runCopy();
+          runCopyOn(copyBtnRef || headCopyBtn);
         }
       }
     }
