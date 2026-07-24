@@ -597,6 +597,7 @@
   // ── Router ────────────────────────────────────────────────
   let unsubs = [];
   let projectsCache = [];
+  let ideasUnlocked = false;   // App-Ideen erst nach Code-Eingabe sichtbar (nur diese Sitzung)
 
   function track(fn){ if(fn) unsubs.push(fn); }
   function cleanup(){ unsubs.forEach(fn=>{ try{fn();}catch(e){} }); unsubs=[]; }
@@ -642,14 +643,26 @@
     ]));
     subscribeTodos(todosWrap);
 
-    // App-Ideen Bereich
-    const ideasWrap = el('div');
-    app.appendChild(el('div',{style:'border-top:1px solid var(--hairline);padding-top:34px;margin-top:8px;'},[
-      el('p',{class:'section-label',text:'💡 App-Ideen'}),
-      buildIdeaForm(),
-      ideasWrap
-    ]));
-    subscribeIdeas(ideasWrap);
+    // App-Ideen Bereich (code-geschützt)
+    const ideasSection = el('div',{style:'border-top:1px solid var(--hairline);padding-top:34px;margin-top:8px;'});
+    app.appendChild(ideasSection);
+
+    function showIdeas(){
+      ideasSection.innerHTML='';
+      const ideasWrap = el('div');
+      ideasSection.appendChild(el('p',{class:'section-label',text:'💡 App-Ideen'}));
+      ideasSection.appendChild(buildIdeaForm());
+      ideasSection.appendChild(ideasWrap);
+      subscribeIdeas(ideasWrap);
+    }
+
+    if(ideasUnlocked){
+      showIdeas();
+    } else {
+      ideasSection.appendChild(
+        el('button',{class:'btn',text:'💡 App-Ideen',onclick:()=>openIdeaCodeModal(()=>{ ideasUnlocked=true; showIdeas(); })})
+      );
+    }
 
     app.appendChild(el('footer',{text:'Alle Änderungen werden automatisch über die Datenbank synchronisiert und dauerhaft gespeichert.'}));
 
@@ -789,6 +802,47 @@
   // ══════════════════════════════════════════════════════════
   //  APP-IDEEN
   // ══════════════════════════════════════════════════════════
+  const IDEAS_CODE = '271201';
+
+  // Code-Popup, das dem App-Ideen-Bereich vorgeschaltet ist.
+  // onSuccess wird bei korrektem Code aufgerufen (Popup schließt sich zuvor).
+  function openIdeaCodeModal(onSuccess){
+    const codeInput = el('input',{type:'text',inputmode:'numeric',pattern:'[0-9]*',
+      autocomplete:'off',placeholder:'Code eingeben',maxlength:'12'});
+    const errorMsg = el('p',{style:'color:var(--danger);font-size:13px;margin:10px 0 0;display:none;',
+      text:'Falscher Code – bitte erneut versuchen.'});
+
+    const overlay = el('div',{class:'modal-overlay'});
+    overlay.addEventListener('click',(e)=>{ if(e.target===overlay) overlay.remove(); });
+    const okBtn = el('button',{class:'btn',text:'Bestätigen'});
+
+    const modal = el('div',{class:'modal'},[
+      el('h2',{text:'App-Ideen'}),
+      el('div',{class:'field'},[el('label',{text:'Code'}),codeInput,errorMsg]),
+      el('div',{class:'modal-actions'},[
+        el('button',{class:'btn ghost',text:'Abbrechen',onclick:()=>overlay.remove()}),
+        okBtn
+      ])
+    ]);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    codeInput.focus();
+
+    function submit(){
+      if(codeInput.value.trim()===IDEAS_CODE){
+        overlay.remove();
+        onSuccess();
+      } else {
+        errorMsg.style.display='block';
+        codeInput.value='';
+        codeInput.focus();
+      }
+    }
+    okBtn.addEventListener('click',submit);
+    codeInput.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); submit(); }});
+    codeInput.addEventListener('input',()=>{ errorMsg.style.display='none'; });
+  }
+
   function buildIdeaForm(){
     const ta = el('textarea',{placeholder:'Neue App-Idee festhalten … (beliebig lang)',rows:'3',maxlength:'8000'});
     const btn = el('button',{class:'btn',text:'Idee speichern'});
