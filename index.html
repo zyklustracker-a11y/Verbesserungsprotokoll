@@ -652,20 +652,30 @@
 
     function showIdeas(){
       ideasSection.innerHTML='';
+      const head = el('div',{style:'display:flex;align-items:center;gap:12px;margin-bottom:16px;'},[
+        el('p',{class:'section-label',text:'💡 App-Ideen',style:'margin:0;'}),
+        el('button',{class:'btn small ghost',text:'Verstecken',onclick:hideIdeas})
+      ]);
       const ideasWrap = el('div');
-      ideasSection.appendChild(el('p',{class:'section-label',text:'💡 App-Ideen'}));
+      ideasSection.appendChild(head);
       ideasSection.appendChild(buildIdeaForm());
       ideasSection.appendChild(ideasWrap);
       subscribeIdeas(ideasWrap);
     }
 
-    if(ideasUnlocked){
-      showIdeas();
-    } else {
+    function showLocked(){
+      ideasSection.innerHTML='';
       ideasSection.appendChild(
         el('button',{class:'btn',text:'💡 App-Ideen',onclick:()=>openIdeaCodeModal(()=>{ ideasUnlocked=true; showIdeas(); })})
       );
     }
+
+    function hideIdeas(){
+      ideasUnlocked=false;   // Sitzungs-Status zurücksetzen – Code wird erneut abgefragt
+      showLocked();
+    }
+
+    if(ideasUnlocked){ showIdeas(); } else { showLocked(); }
 
     app.appendChild(el('footer',{text:'Alle Änderungen werden automatisch über die Datenbank synchronisiert und dauerhaft gespeichert.'}));
 
