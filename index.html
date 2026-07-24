@@ -334,6 +334,8 @@
   .idea-foot .meta{margin:0;}
   .idea-actions{display:flex;gap:4px;flex-wrap:wrap;align-items:center;}
   .idea-foot{flex-wrap:wrap;gap:8px 10px;}
+  .idea-move{display:flex;gap:2px;align-items:center;margin-right:2px;}
+  .ctrl-btn:disabled{opacity:.28;cursor:default;background:none;}
 
   /* To-dos */
   .todo-item{
@@ -678,6 +680,7 @@
   // ── Router ────────────────────────────────────────────────
   let unsubs = [];
   let projectsCache = [];
+  let ideasCache = [];
   let signedIn = false;        // wird vom Auth-Gate am Dateiende gesetzt
   let ideasUnlocked = false;   // App-Ideen erst nach Code-Eingabe sichtbar (nur diese Sitzung)
 
@@ -938,7 +941,9 @@
       if(!val) return;
       btn.disabled=true;
       try{
-        await addDoc(ideasRef,{text:val,createdAt:serverTimestamp()});
+        // Neue Ideen oben einsortieren (kleinster order-Wert = oben).
+        const minOrder = ideasCache.reduce((m,d)=>Math.min(m, d.order??0), 0);
+        await addDoc(ideasRef,{text:val,order:minOrder-1,createdAt:serverTimestamp()});
         ta.value='';
       }catch(err){ console.error(err); alert('Idee konnte nicht gespeichert werden.'); }
       btn.disabled=false; ta.focus();
@@ -947,24 +952,67 @@
   }
 
   function subscribeIdeas(container){
+    // Nach createdAt (neu→alt) abfragen – das ist auch die Alt-Anzeige­reihenfolge,
+    // anhand derer fehlende order-Werte einmalig initialisiert werden.
     const q = query(ideasRef, orderBy('createdAt','desc'));
     track(onSnapshot(q,(snap)=>{
+      let docs = snap.docs.map(d=>({id:d.id, ...d.data()}));
+
+      // Migration: App-Ideen ohne order-Feld anhand der aktuellen Anzeige-
+      // reihenfolge (createdAt desc) mit fortlaufenden Werten versehen.
+      if(docs.some(d=> typeof d.order !== 'number')){
+        const batch = writeBatch(db);
+        docs.forEach((d,i)=>{
+          if(typeof d.order !== 'number'){
+            d.order = i;
+            batch.update(doc(db,'appIdeas',d.id),{order:i});
+          }
+        });
+        batch.commit().catch(err=>console.error(err));
+      }
+
+      // Aufsteigend nach order sortieren (kleinster Wert = oben).
+      docs.sort((a,b)=> (a.order??0) - (b.order??0));
+      ideasCache = docs;
+
       container.innerHTML='';
-      if(snap.empty){
+      if(docs.length===0){
         container.appendChild(el('p',{class:'empty',text:'Noch keine Ideen – schreib deine erste oben hinein.'}));
         return;
       }
-      snap.docs.forEach(d=> container.appendChild(buildIdeaItem(d.id,d.data())));
+      docs.forEach((d,i)=> container.appendChild(buildIdeaItem(d.id,d,i,docs.length)));
     },(err)=>console.error(err)));
   }
 
-  function buildIdeaItem(id,data){
+  async function moveIdea(index,dir){
+    const target = index+dir;
+    if(target<0 || target>=ideasCache.length) return;
+    const a = ideasCache[index], b = ideasCache[target];
+    const oa = (a.order ?? index), ob = (b.order ?? target);
+    try{
+      const batch = writeBatch(db);
+      batch.update(doc(db,'appIdeas',a.id),{order:ob});
+      batch.update(doc(db,'appIdeas',b.id),{order:oa});
+      await batch.commit();
+    }catch(err){ console.error(err); alert('Reihenfolge konnte nicht geändert werden.'); }
+  }
+
+  function buildIdeaItem(id,data,index,total){
     const item = el('div',{class:'idea-item'});
     const textDiv = el('div',{class:'idea-text',text:data.text});
 
     const foot = el('div',{class:'idea-foot'});
     foot.appendChild(el('div',{class:'meta',text:(data.updatedAt?'bearb. ':'')+fmtDate(data.updatedAt||data.createdAt)}));
     const actions = el('div',{class:'idea-actions'});
+
+    // Reihenfolge ändern (Priorisierung)
+    const move = el('div',{class:'idea-move'});
+    const upBtn   = el('button',{class:'ctrl-btn',title:'Nach oben',text:'▲',onclick:()=>moveIdea(index,-1)});
+    const downBtn = el('button',{class:'ctrl-btn',title:'Nach unten',text:'▼',onclick:()=>moveIdea(index,1)});
+    upBtn.disabled   = (index===0);
+    downBtn.disabled = (index===total-1);
+    move.appendChild(upBtn); move.appendChild(downBtn);
+    actions.appendChild(move);
     const hasConcept = !!(data.concept && data.concept.trim());
     const hasPrompt  = !!(data.prompt && data.prompt.trim());
     const conceptBtn = el('button',{class:'pill-btn'+(hasConcept?' has':''),title:'Konzept anzeigen / bearbeiten',
