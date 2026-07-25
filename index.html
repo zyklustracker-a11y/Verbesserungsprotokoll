@@ -284,7 +284,14 @@
     color:var(--paper-text-dim);
     margin-top:8px;
   }
-  .entry-actions{display:flex;gap:2px;flex-shrink:0;}
+  .entry-actions{display:flex;gap:2px;flex-shrink:0;align-items:flex-start;}
+  /* Priorisierungs-Pfeile: dezent, aber sicher treffbares 32×32-Tap-Ziel fürs iPhone */
+  .entry-move{display:flex;gap:1px;align-items:center;margin-right:2px;}
+  .entry-move .ctrl-btn{
+    font-size:13px;padding:0;
+    min-width:32px;min-height:32px;
+    display:flex;align-items:center;justify-content:center;
+  }
   .row-btn{
     background:none;border:none;color:var(--paper-text-dim);
     cursor:pointer;font-size:17px;padding:8px 11px;border-radius:3px;
@@ -323,6 +330,8 @@
   .idea-foot .meta{margin:0;}
   .idea-actions{display:flex;gap:4px;flex-wrap:wrap;align-items:center;}
   .idea-foot{flex-wrap:wrap;gap:8px 10px;}
+  .idea-move{display:flex;gap:2px;align-items:center;margin-right:2px;}
+  .ctrl-btn:disabled{opacity:.28;cursor:default;background:none;}
 
   /* To-dos */
   .todo-item{
@@ -597,6 +606,15 @@
   // ── Router ────────────────────────────────────────────────
   let unsubs = [];
   let projectsCache = [];
+  let ideasCache = [];
+  let ideasUnlocked = false;   // App-Ideen erst nach Code-Eingabe sichtbar (nur diese Sitzung)
+
+  // Priorisierung der offenen Aufgaben im aktuell geöffneten Projekt
+  // (analog zu projectsCache / ideasCache – es ist immer nur ein Projekt sichtbar).
+  let openEntriesCache   = [];                 // offene Aufgaben, nach order sortiert
+  let openEntriesProject = null;               // Projekt, zu dem der Cache gehört
+  let openEntriesRepaint = ()=>{};             // zeichnet den Bereich neu (optimistisches UI)
+  let openEntriesQueue   = Promise.resolve();  // serialisiert Firestore-Updates (kein Race bei Schnellklicks)
 
   function track(fn){ if(fn) unsubs.push(fn); }
   function cleanup(){ unsubs.forEach(fn=>{ try{fn();}catch(e){} }); unsubs=[]; }
@@ -642,14 +660,36 @@
     ]));
     subscribeTodos(todosWrap);
 
-    // App-Ideen Bereich
-    const ideasWrap = el('div');
-    app.appendChild(el('div',{style:'border-top:1px solid var(--hairline);padding-top:34px;margin-top:8px;'},[
-      el('p',{class:'section-label',text:'💡 App-Ideen'}),
-      buildIdeaForm(),
-      ideasWrap
-    ]));
-    subscribeIdeas(ideasWrap);
+    // App-Ideen Bereich (code-geschützt)
+    const ideasSection = el('div',{style:'border-top:1px solid var(--hairline);padding-top:34px;margin-top:8px;'});
+    app.appendChild(ideasSection);
+
+    function showIdeas(){
+      ideasSection.innerHTML='';
+      const head = el('div',{style:'display:flex;align-items:center;gap:12px;margin-bottom:16px;'},[
+        el('p',{class:'section-label',text:'💡 App-Ideen',style:'margin:0;'}),
+        el('button',{class:'btn small ghost',text:'Verstecken',onclick:hideIdeas})
+      ]);
+      const ideasWrap = el('div');
+      ideasSection.appendChild(head);
+      ideasSection.appendChild(buildIdeaForm());
+      ideasSection.appendChild(ideasWrap);
+      subscribeIdeas(ideasWrap);
+    }
+
+    function showLocked(){
+      ideasSection.innerHTML='';
+      ideasSection.appendChild(
+        el('button',{class:'btn',text:'💡 App-Ideen',onclick:()=>openIdeaCodeModal(()=>{ ideasUnlocked=true; showIdeas(); })})
+      );
+    }
+
+    function hideIdeas(){
+      ideasUnlocked=false;   // Sitzungs-Status zurücksetzen – Code wird erneut abgefragt
+      showLocked();
+    }
+
+    if(ideasUnlocked){ showIdeas(); } else { showLocked(); }
 
     app.appendChild(el('footer',{text:'Alle Änderungen werden automatisch über die Datenbank synchronisiert und dauerhaft gespeichert.'}));
 
@@ -789,6 +829,47 @@
   // ══════════════════════════════════════════════════════════
   //  APP-IDEEN
   // ══════════════════════════════════════════════════════════
+  const IDEAS_CODE = '271201';
+
+  // Code-Popup, das dem App-Ideen-Bereich vorgeschaltet ist.
+  // onSuccess wird bei korrektem Code aufgerufen (Popup schließt sich zuvor).
+  function openIdeaCodeModal(onSuccess){
+    const codeInput = el('input',{type:'text',inputmode:'numeric',pattern:'[0-9]*',
+      autocomplete:'off',placeholder:'Code eingeben',maxlength:'12'});
+    const errorMsg = el('p',{style:'color:var(--danger);font-size:13px;margin:10px 0 0;display:none;',
+      text:'Falscher Code – bitte erneut versuchen.'});
+
+    const overlay = el('div',{class:'modal-overlay'});
+    overlay.addEventListener('click',(e)=>{ if(e.target===overlay) overlay.remove(); });
+    const okBtn = el('button',{class:'btn',text:'Bestätigen'});
+
+    const modal = el('div',{class:'modal'},[
+      el('h2',{text:'App-Ideen'}),
+      el('div',{class:'field'},[el('label',{text:'Code'}),codeInput,errorMsg]),
+      el('div',{class:'modal-actions'},[
+        el('button',{class:'btn ghost',text:'Abbrechen',onclick:()=>overlay.remove()}),
+        okBtn
+      ])
+    ]);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    codeInput.focus();
+
+    function submit(){
+      if(codeInput.value.trim()===IDEAS_CODE){
+        overlay.remove();
+        onSuccess();
+      } else {
+        errorMsg.style.display='block';
+        codeInput.value='';
+        codeInput.focus();
+      }
+    }
+    okBtn.addEventListener('click',submit);
+    codeInput.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); submit(); }});
+    codeInput.addEventListener('input',()=>{ errorMsg.style.display='none'; });
+  }
+
   function buildIdeaForm(){
     const ta = el('textarea',{placeholder:'Neue App-Idee festhalten … (beliebig lang)',rows:'3',maxlength:'8000'});
     const btn = el('button',{class:'btn',text:'Idee speichern'});
@@ -799,7 +880,9 @@
       if(!val) return;
       btn.disabled=true;
       try{
-        await addDoc(ideasRef,{text:val,createdAt:serverTimestamp()});
+        // Neue Ideen oben einsortieren (kleinster order-Wert = oben).
+        const minOrder = ideasCache.reduce((m,d)=>Math.min(m, d.order??0), 0);
+        await addDoc(ideasRef,{text:val,order:minOrder-1,createdAt:serverTimestamp()});
         ta.value='';
       }catch(err){ console.error(err); alert('Idee konnte nicht gespeichert werden.'); }
       btn.disabled=false; ta.focus();
@@ -808,24 +891,67 @@
   }
 
   function subscribeIdeas(container){
+    // Nach createdAt (neu→alt) abfragen – das ist auch die Alt-Anzeige­reihenfolge,
+    // anhand derer fehlende order-Werte einmalig initialisiert werden.
     const q = query(ideasRef, orderBy('createdAt','desc'));
     track(onSnapshot(q,(snap)=>{
+      let docs = snap.docs.map(d=>({id:d.id, ...d.data()}));
+
+      // Migration: App-Ideen ohne order-Feld anhand der aktuellen Anzeige-
+      // reihenfolge (createdAt desc) mit fortlaufenden Werten versehen.
+      if(docs.some(d=> typeof d.order !== 'number')){
+        const batch = writeBatch(db);
+        docs.forEach((d,i)=>{
+          if(typeof d.order !== 'number'){
+            d.order = i;
+            batch.update(doc(db,'appIdeas',d.id),{order:i});
+          }
+        });
+        batch.commit().catch(err=>console.error(err));
+      }
+
+      // Aufsteigend nach order sortieren (kleinster Wert = oben).
+      docs.sort((a,b)=> (a.order??0) - (b.order??0));
+      ideasCache = docs;
+
       container.innerHTML='';
-      if(snap.empty){
+      if(docs.length===0){
         container.appendChild(el('p',{class:'empty',text:'Noch keine Ideen – schreib deine erste oben hinein.'}));
         return;
       }
-      snap.docs.forEach(d=> container.appendChild(buildIdeaItem(d.id,d.data())));
+      docs.forEach((d,i)=> container.appendChild(buildIdeaItem(d.id,d,i,docs.length)));
     },(err)=>console.error(err)));
   }
 
-  function buildIdeaItem(id,data){
+  async function moveIdea(index,dir){
+    const target = index+dir;
+    if(target<0 || target>=ideasCache.length) return;
+    const a = ideasCache[index], b = ideasCache[target];
+    const oa = (a.order ?? index), ob = (b.order ?? target);
+    try{
+      const batch = writeBatch(db);
+      batch.update(doc(db,'appIdeas',a.id),{order:ob});
+      batch.update(doc(db,'appIdeas',b.id),{order:oa});
+      await batch.commit();
+    }catch(err){ console.error(err); alert('Reihenfolge konnte nicht geändert werden.'); }
+  }
+
+  function buildIdeaItem(id,data,index,total){
     const item = el('div',{class:'idea-item'});
     const textDiv = el('div',{class:'idea-text',text:data.text});
 
     const foot = el('div',{class:'idea-foot'});
     foot.appendChild(el('div',{class:'meta',text:(data.updatedAt?'bearb. ':'')+fmtDate(data.updatedAt||data.createdAt)}));
     const actions = el('div',{class:'idea-actions'});
+
+    // Reihenfolge ändern (Priorisierung)
+    const move = el('div',{class:'idea-move'});
+    const upBtn   = el('button',{class:'ctrl-btn',title:'Nach oben',text:'▲',onclick:()=>moveIdea(index,-1)});
+    const downBtn = el('button',{class:'ctrl-btn',title:'Nach unten',text:'▼',onclick:()=>moveIdea(index,1)});
+    upBtn.disabled   = (index===0);
+    downBtn.disabled = (index===total-1);
+    move.appendChild(upBtn); move.appendChild(downBtn);
+    actions.appendChild(move);
     const hasConcept = !!(data.concept && data.concept.trim());
     const hasPrompt  = !!(data.prompt && data.prompt.trim());
     const conceptBtn = el('button',{class:'pill-btn'+(hasConcept?' has':''),title:'Konzept anzeigen / bearbeiten',
@@ -1202,10 +1328,13 @@
       if(!val) return;
       addBtn.disabled=true;
       try{
+        // Neue Aufgabe ans Ende der offenen Liste (größter order-Wert = unten).
+        const maxOrder = openEntriesCache.reduce((m,e)=>Math.max(m, e.order??0), 0);
         await addDoc(entriesRefFor(project),{
           text:val,
           note:noteInput.value.trim(),
           done:false,
+          order:maxOrder+1,
           createdAt:serverTimestamp()
         });
         textInput.value=''; noteInput.value='';
@@ -1213,18 +1342,49 @@
       addBtn.disabled=false; textInput.focus();
     });
 
+    // Zeichnet nur den Bereich der offenen Aufgaben neu (aus openEntriesCache).
+    // Wird sowohl vom Snapshot als auch beim optimistischen Verschieben aufgerufen.
+    function renderOpen(){
+      openSection.innerHTML='';
+      if(openEntriesCache.length===0){
+        openSection.appendChild(el('p',{class:'empty',text:'Keine offenen Aufgaben.'}));
+      }else{
+        openEntriesCache.forEach((d,i)=> openSection.appendChild(buildEntry(project,d.id,d,i,openEntriesCache.length)));
+      }
+      openCount.textContent=openEntriesCache.length;
+    }
+    // Modul-Status auf dieses Projekt binden, damit moveEntry darauf arbeitet.
+    openEntriesProject = project;
+    openEntriesRepaint = renderOpen;
+
     const q = query(entriesRefFor(project), orderBy('createdAt','asc'));
     track(onSnapshot(q,(snapshot)=>{
-      openSection.innerHTML=''; doneSection.innerHTML='';
-      let openN=0, doneN=0;
-      snapshot.docs.forEach((d)=>{
-        const data = d.data();
-        if(data.done){ doneSection.appendChild(buildEntry(project,d.id,data,doneN)); doneN++; }
-        else { openSection.appendChild(buildEntry(project,d.id,data,openN)); openN++; }
-      });
-      openCount.textContent=openN; doneCount.textContent=doneN;
-      if(openN===0) openSection.appendChild(el('p',{class:'empty',text:'Keine offenen Aufgaben.'}));
-      if(doneN===0) doneSection.appendChild(el('p',{class:'empty',text:'Noch nichts erledigt.'}));
+      const docs = snapshot.docs.map(d=>({id:d.id, ...d.data()}));
+      const open = docs.filter(d=>!d.done);
+      const done = docs.filter(d=>d.done);
+
+      // Migration: offene Aufgaben ohne order-Feld anhand der aktuellen Anzeige-
+      // reihenfolge (createdAt asc) fortlaufend ans Ende einsortieren – ohne Datenverlust.
+      const missing = open.filter(d=> typeof d.order !== 'number');
+      if(missing.length){
+        let base = open.reduce((m,d)=> typeof d.order==='number' ? Math.max(m,d.order) : m, 0);
+        const batch = writeBatch(db);
+        missing.forEach((d)=>{ base++; d.order=base; batch.update(entryDocFor(project,d.id),{order:base}); });
+        batch.commit().catch(err=>console.error(err));
+      }
+
+      // Offene Aufgaben immer nach order sortieren (kleinster Wert = oben).
+      open.sort((a,b)=> (a.order??0) - (b.order??0));
+      openEntriesProject = project;
+      openEntriesCache = open;
+
+      renderOpen();
+
+      doneSection.innerHTML='';
+      done.forEach((d,i)=> doneSection.appendChild(buildEntry(project,d.id,d,i,done.length)));
+      doneCount.textContent=done.length;
+      if(done.length===0) doneSection.appendChild(el('p',{class:'empty',text:'Noch nichts erledigt.'}));
+
       statusDot.classList.remove('offline');
       statusText.textContent='Verbunden · Live-Synchronisierung aktiv';
     },(err)=>{
@@ -1234,7 +1394,30 @@
     }));
   }
 
-  function buildEntry(project,id,data,index){
+  // Offene Aufgabe um eine Position verschieben (Priorisierung, analog moveIdea).
+  // UI wird sofort aktualisiert, die Firestore-Updates laufen danach und serialisiert –
+  // so zerschießen auch zwei schnelle Klicks die Reihenfolge nicht.
+  function moveEntry(index,dir){
+    const arr = openEntriesCache;
+    const target = index+dir;
+    if(target<0 || target>=arr.length) return;
+    const a = arr[index], b = arr[target];
+    const oa = (a.order ?? index), ob = (b.order ?? target);
+    // order-Werte tauschen und lokal sofort neu sortieren + zeichnen
+    a.order = ob; b.order = oa;
+    arr.sort((x,y)=> (x.order??0) - (y.order??0));
+    openEntriesRepaint();
+    // Firestore-Update danach – Zielwerte festhalten, Commits nacheinander ausführen
+    const proj = openEntriesProject, na = a.order, nb = b.order, ida = a.id, idb = b.id;
+    openEntriesQueue = openEntriesQueue.then(()=>{
+      const batch = writeBatch(db);
+      batch.update(entryDocFor(proj,ida),{order:na});
+      batch.update(entryDocFor(proj,idb),{order:nb});
+      return batch.commit();
+    }).catch(err=>{ console.error(err); alert('Reihenfolge konnte nicht geändert werden.'); });
+  }
+
+  function buildEntry(project,id,data,index,total){
     const li = el('li',{class:'entry'});
 
     const idx = el('span',{class:'idx',text:'§'+String(index+1).padStart(2,'0')});
@@ -1251,6 +1434,18 @@
     body.appendChild(el('div',{class:'meta',text:(data.updatedAt?'bearb. ':'')+fmtDate(data.updatedAt||data.createdAt)}));
 
     const actions = el('div',{class:'entry-actions'});
+
+    // Priorisierung: Pfeile nur bei offenen Aufgaben (nicht bei erledigten).
+    if(!data.done){
+      const move = el('div',{class:'entry-move'});
+      const upBtn   = el('button',{class:'ctrl-btn',title:'Nach oben',text:'▲',onclick:()=>moveEntry(index,-1)});
+      const downBtn = el('button',{class:'ctrl-btn',title:'Nach unten',text:'▼',onclick:()=>moveEntry(index,1)});
+      upBtn.disabled   = (index===0);
+      downBtn.disabled = (index===total-1);
+      move.appendChild(upBtn); move.appendChild(downBtn);
+      actions.appendChild(move);
+    }
+
     const editBtn = el('button',{class:'row-btn',title:'Bearbeiten',text:'✎'});
     const delBtn  = el('button',{class:'row-btn del',title:'Eintrag löschen',text:'✕'});
     actions.appendChild(editBtn); actions.appendChild(delBtn);
@@ -1268,7 +1463,7 @@
       const box = el('div',{class:'edit-box'},[t,nt,el('div',{class:'edit-actions'},[save,cancel])]);
       li.innerHTML=''; li.appendChild(idx); li.appendChild(box); t.focus();
       cancel.addEventListener('click',()=>{
-        li.replaceWith(buildEntry(project,id,data,index));
+        li.replaceWith(buildEntry(project,id,data,index,total));
       });
       save.addEventListener('click',async()=>{
         const val = t.value.trim(); if(!val) return;
