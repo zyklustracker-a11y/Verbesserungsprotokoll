@@ -295,7 +295,14 @@
     color:var(--paper-text-dim);
     margin-top:8px;
   }
-  .entry-actions{display:flex;gap:2px;flex-shrink:0;}
+  .entry-actions{display:flex;gap:2px;flex-shrink:0;align-items:flex-start;}
+  /* Priorisierungs-Pfeile: dezent, aber sicher treffbares 32×32-Tap-Ziel fürs iPhone */
+  .entry-move{display:flex;gap:1px;align-items:center;margin-right:2px;}
+  .entry-move .ctrl-btn{
+    font-size:13px;padding:0;
+    min-width:32px;min-height:32px;
+    display:flex;align-items:center;justify-content:center;
+  }
   .row-btn{
     background:none;border:none;color:var(--paper-text-dim);
     cursor:pointer;font-size:17px;padding:8px 11px;border-radius:3px;
@@ -683,6 +690,13 @@
   let ideasCache = [];
   let signedIn = false;        // wird vom Auth-Gate am Dateiende gesetzt
   let ideasUnlocked = false;   // App-Ideen erst nach Code-Eingabe sichtbar (nur diese Sitzung)
+
+  // Priorisierung der offenen Aufgaben im aktuell geöffneten Projekt
+  // (analog zu projectsCache / ideasCache – es ist immer nur ein Projekt sichtbar).
+  let openEntriesCache   = [];                 // offene Aufgaben, nach order sortiert
+  let openEntriesProject = null;               // Projekt, zu dem der Cache gehört
+  let openEntriesRepaint = ()=>{};             // zeichnet den Bereich neu (optimistisches UI)
+  let openEntriesQueue   = Promise.resolve();  // serialisiert Firestore-Updates (kein Race bei Schnellklicks)
 
   function track(fn){ if(fn) unsubs.push(fn); }
   function cleanup(){ unsubs.forEach(fn=>{ try{fn();}catch(e){} }); unsubs=[]; }
@@ -1399,10 +1413,13 @@
       if(!val) return;
       addBtn.disabled=true;
       try{
+        // Neue Aufgabe ans Ende der offenen Liste (größter order-Wert = unten).
+        const maxOrder = openEntriesCache.reduce((m,e)=>Math.max(m, e.order??0), 0);
         await addDoc(entriesRefFor(project),{
           text:val,
           note:noteInput.value.trim(),
           done:false,
+          order:maxOrder+1,
           createdAt:serverTimestamp()
         });
         textInput.value=''; noteInput.value='';
@@ -1410,18 +1427,49 @@
       addBtn.disabled=false; textInput.focus();
     });
 
+    // Zeichnet nur den Bereich der offenen Aufgaben neu (aus openEntriesCache).
+    // Wird sowohl vom Snapshot als auch beim optimistischen Verschieben aufgerufen.
+    function renderOpen(){
+      openSection.innerHTML='';
+      if(openEntriesCache.length===0){
+        openSection.appendChild(el('p',{class:'empty',text:'Keine offenen Aufgaben.'}));
+      }else{
+        openEntriesCache.forEach((d,i)=> openSection.appendChild(buildEntry(project,d.id,d,i,openEntriesCache.length)));
+      }
+      openCount.textContent=openEntriesCache.length;
+    }
+    // Modul-Status auf dieses Projekt binden, damit moveEntry darauf arbeitet.
+    openEntriesProject = project;
+    openEntriesRepaint = renderOpen;
+
     const q = query(entriesRefFor(project), orderBy('createdAt','asc'));
     track(onSnapshot(q,(snapshot)=>{
-      openSection.innerHTML=''; doneSection.innerHTML='';
-      let openN=0, doneN=0;
-      snapshot.docs.forEach((d)=>{
-        const data = d.data();
-        if(data.done){ doneSection.appendChild(buildEntry(project,d.id,data,doneN)); doneN++; }
-        else { openSection.appendChild(buildEntry(project,d.id,data,openN)); openN++; }
-      });
-      openCount.textContent=openN; doneCount.textContent=doneN;
-      if(openN===0) openSection.appendChild(el('p',{class:'empty',text:'Keine offenen Aufgaben.'}));
-      if(doneN===0) doneSection.appendChild(el('p',{class:'empty',text:'Noch nichts erledigt.'}));
+      const docs = snapshot.docs.map(d=>({id:d.id, ...d.data()}));
+      const open = docs.filter(d=>!d.done);
+      const done = docs.filter(d=>d.done);
+
+      // Migration: offene Aufgaben ohne order-Feld anhand der aktuellen Anzeige-
+      // reihenfolge (createdAt asc) fortlaufend ans Ende einsortieren – ohne Datenverlust.
+      const missing = open.filter(d=> typeof d.order !== 'number');
+      if(missing.length){
+        let base = open.reduce((m,d)=> typeof d.order==='number' ? Math.max(m,d.order) : m, 0);
+        const batch = writeBatch(db);
+        missing.forEach((d)=>{ base++; d.order=base; batch.update(entryDocFor(project,d.id),{order:base}); });
+        batch.commit().catch(err=>console.error(err));
+      }
+
+      // Offene Aufgaben immer nach order sortieren (kleinster Wert = oben).
+      open.sort((a,b)=> (a.order??0) - (b.order??0));
+      openEntriesProject = project;
+      openEntriesCache = open;
+
+      renderOpen();
+
+      doneSection.innerHTML='';
+      done.forEach((d,i)=> doneSection.appendChild(buildEntry(project,d.id,d,i,done.length)));
+      doneCount.textContent=done.length;
+      if(done.length===0) doneSection.appendChild(el('p',{class:'empty',text:'Noch nichts erledigt.'}));
+
       statusDot.classList.remove('offline');
       statusText.textContent='Verbunden · Live-Synchronisierung aktiv';
     },(err)=>{
@@ -1431,7 +1479,30 @@
     }));
   }
 
-  function buildEntry(project,id,data,index){
+  // Offene Aufgabe um eine Position verschieben (Priorisierung, analog moveIdea).
+  // UI wird sofort aktualisiert, die Firestore-Updates laufen danach und serialisiert –
+  // so zerschießen auch zwei schnelle Klicks die Reihenfolge nicht.
+  function moveEntry(index,dir){
+    const arr = openEntriesCache;
+    const target = index+dir;
+    if(target<0 || target>=arr.length) return;
+    const a = arr[index], b = arr[target];
+    const oa = (a.order ?? index), ob = (b.order ?? target);
+    // order-Werte tauschen und lokal sofort neu sortieren + zeichnen
+    a.order = ob; b.order = oa;
+    arr.sort((x,y)=> (x.order??0) - (y.order??0));
+    openEntriesRepaint();
+    // Firestore-Update danach – Zielwerte festhalten, Commits nacheinander ausführen
+    const proj = openEntriesProject, na = a.order, nb = b.order, ida = a.id, idb = b.id;
+    openEntriesQueue = openEntriesQueue.then(()=>{
+      const batch = writeBatch(db);
+      batch.update(entryDocFor(proj,ida),{order:na});
+      batch.update(entryDocFor(proj,idb),{order:nb});
+      return batch.commit();
+    }).catch(err=>{ console.error(err); alert('Reihenfolge konnte nicht geändert werden.'); });
+  }
+
+  function buildEntry(project,id,data,index,total){
     const li = el('li',{class:'entry'});
 
     const idx = el('span',{class:'idx',text:'§'+String(index+1).padStart(2,'0')});
@@ -1448,6 +1519,18 @@
     body.appendChild(el('div',{class:'meta',text:(data.updatedAt?'bearb. ':'')+fmtDate(data.updatedAt||data.createdAt)}));
 
     const actions = el('div',{class:'entry-actions'});
+
+    // Priorisierung: Pfeile nur bei offenen Aufgaben (nicht bei erledigten).
+    if(!data.done){
+      const move = el('div',{class:'entry-move'});
+      const upBtn   = el('button',{class:'ctrl-btn',title:'Nach oben',text:'▲',onclick:()=>moveEntry(index,-1)});
+      const downBtn = el('button',{class:'ctrl-btn',title:'Nach unten',text:'▼',onclick:()=>moveEntry(index,1)});
+      upBtn.disabled   = (index===0);
+      downBtn.disabled = (index===total-1);
+      move.appendChild(upBtn); move.appendChild(downBtn);
+      actions.appendChild(move);
+    }
+
     const editBtn = el('button',{class:'row-btn',title:'Bearbeiten',text:'✎'});
     const delBtn  = el('button',{class:'row-btn del',title:'Eintrag löschen',text:'✕'});
     actions.appendChild(editBtn); actions.appendChild(delBtn);
@@ -1465,7 +1548,7 @@
       const box = el('div',{class:'edit-box'},[t,nt,el('div',{class:'edit-actions'},[save,cancel])]);
       li.innerHTML=''; li.appendChild(idx); li.appendChild(box); t.focus();
       cancel.addEventListener('click',()=>{
-        li.replaceWith(buildEntry(project,id,data,index));
+        li.replaceWith(buildEntry(project,id,data,index,total));
       });
       save.addEventListener('click',async()=>{
         const val = t.value.trim(); if(!val) return;
