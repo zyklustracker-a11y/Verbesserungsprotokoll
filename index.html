@@ -764,6 +764,7 @@
   let projectsCache = [];
   let ideasCache = [];
   let promptsCache = [];       // gespeicherte Prompts, nach order sortiert
+  let promptsOpen = false;     // Bereich „Getestete Prompts" startet eingeklappt
   let signedIn = false;        // wird vom Auth-Gate am Dateiende gesetzt
   let ideasUnlocked = false;   // App-Ideen erst nach Code-Eingabe sichtbar (nur diese Sitzung)
 
@@ -836,15 +837,6 @@
       ideasSection.appendChild(buildIdeaForm());
       ideasSection.appendChild(ideasWrap);
       subscribeIdeas(ideasWrap);
-
-      // Gespeicherte Prompts – eigener Unterabschnitt, ebenfalls code-geschützt
-      const promptsWrap = el('div');
-      ideasSection.appendChild(el('div',{style:'border-top:1px solid var(--hairline);padding-top:30px;margin-top:34px;'},[
-        el('p',{class:'section-label',text:'📝 Gespeicherte Prompts'}),
-        buildPromptForm(),
-        promptsWrap
-      ]));
-      subscribePrompts(promptsWrap);
     }
 
     function showLocked(){
@@ -860,6 +852,42 @@
     }
 
     if(ideasUnlocked){ showIdeas(); } else { showLocked(); }
+
+    // Getestete Prompts – eigener Bereich unter den App-Ideen, ohne Code.
+    // Standardmäßig eingeklappt, damit die Startseite nicht zu voll wird.
+    const promptsSection = el('div',{style:'border-top:1px solid var(--hairline);padding-top:34px;margin-top:8px;'});
+    app.appendChild(promptsSection);
+    let promptsUnsub = null;
+
+    function showPrompts(){
+      promptsOpen = true;
+      if(promptsUnsub){ promptsUnsub(); promptsUnsub=null; }   // kein doppelter Listener beim Auf-/Zuklappen
+      promptsSection.innerHTML='';
+      const head = el('div',{style:'display:flex;align-items:center;gap:12px;margin-bottom:16px;'},[
+        el('p',{class:'section-label',text:'📝 Getestete Prompts',style:'margin:0;'}),
+        el('button',{class:'btn small ghost',text:'Verstecken',onclick:hidePrompts})
+      ]);
+      const promptsWrap = el('div');
+      promptsSection.appendChild(head);
+      promptsSection.appendChild(buildPromptForm());
+      promptsSection.appendChild(promptsWrap);
+      promptsUnsub = subscribePrompts(promptsWrap);
+    }
+
+    function showPromptsClosed(){
+      promptsSection.innerHTML='';
+      promptsSection.appendChild(
+        el('button',{class:'btn',text:'📝 Getestete Prompts',onclick:showPrompts})
+      );
+    }
+
+    function hidePrompts(){
+      promptsOpen = false;
+      if(promptsUnsub){ promptsUnsub(); promptsUnsub=null; }
+      showPromptsClosed();
+    }
+
+    if(promptsOpen){ showPrompts(); } else { showPromptsClosed(); }
 
     app.appendChild(el('footer',{text:'Alle Änderungen werden automatisch über die Datenbank synchronisiert und dauerhaft gespeichert.'}));
 
@@ -1347,10 +1375,10 @@
   }
 
   // ══════════════════════════════════════════════════════════
-  //  GESPEICHERTE PROMPTS
+  //  GETESTETE PROMPTS
   //  Eigene Sammlung wiederverwendbarer Prompt-Texte, jeweils mit
-  //  Titel, Prompt-Feld und Ein-Klick-Kopieren. Liegt unter „App-Ideen"
-  //  und ist damit an denselben Code gebunden.
+  //  Titel, Prompt-Feld und Ein-Klick-Kopieren. Eigener aufklappbarer
+  //  Bereich unter den App-Ideen – ohne Code, standardmaessig zugeklappt.
   // ══════════════════════════════════════════════════════════
 
   // Kopier-Feedback für die schlichten Prompt-Buttons (Beschriftung kurz umschalten).
@@ -1396,9 +1424,11 @@
     return form;
   }
 
+  // Gibt die Abmeldefunktion zurück, damit der Bereich beim Zuklappen
+  // seinen Listener sauber wieder loswird.
   function subscribePrompts(container){
     const q = query(promptsRef, orderBy('createdAt','desc'));
-    track(onSnapshot(q,(snap)=>{
+    const unsub = onSnapshot(q,(snap)=>{
       let docs = snap.docs.map(d=>({id:d.id, ...d.data()}));
 
       // Migration: Prompts ohne order-Feld anhand der aktuellen Anzeige-
@@ -1424,7 +1454,9 @@
         return;
       }
       docs.forEach((d,i)=> container.appendChild(buildPromptItem(d.id,d,i,docs.length)));
-    },(err)=>console.error(err)));
+    },(err)=>console.error(err));
+    track(unsub);   // greift zusätzlich beim Seitenwechsel
+    return unsub;
   }
 
   async function movePrompt(index,dir){
