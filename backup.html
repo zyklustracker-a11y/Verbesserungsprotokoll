@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Backup · Verbesserungsprotokoll</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink-bg:#1b1d21;
+    --ink-bg-raised:#212327;
+    --ink-bg-raised2:#262a2f;
+    --paper-text:#e4e2dc;
+    --paper-text-dim:#9a978f;
+    --hairline:#34363b;
+    --brass:#c08552;
+    --brass-dim:#8a5f39;
+    --sage:#7a9b76;
+    --danger:#a5645a;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--ink-bg);
+    color:var(--paper-text);
+    font-family:'Inter',system-ui,-apple-system,sans-serif;
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:640px;margin:0 auto;padding:56px 24px 90px;}
+
+  .eyebrow{
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:12px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--brass);margin:0 0 10px;
+  }
+  h1{font-family:'Fraunces',Georgia,serif;font-size:32px;font-weight:500;margin:0 0 10px;}
+  .sub{color:var(--paper-text-dim);font-size:14.5px;line-height:1.6;margin:0 0 30px;}
+
+  .card{
+    background:var(--ink-bg-raised);
+    border:1px solid var(--hairline);
+    border-left:3px solid var(--brass);
+    border-radius:5px;
+    padding:26px 24px;
+  }
+  .card.centered{text-align:center;border-left-width:3px;}
+
+  button.btn{
+    background:var(--brass);color:#1b1d21;border:none;
+    font-family:inherit;font-weight:600;font-size:15px;
+    padding:0 24px;height:50px;border-radius:3px;cursor:pointer;
+    transition:background .15s ease;
+  }
+  button.btn:hover{background:#d09865;}
+  button.btn:disabled{opacity:.5;cursor:default;}
+
+  .google-btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:11px;
+    width:100%;height:50px;
+    background:var(--paper-text);color:#1b1d21;
+    border:none;border-radius:3px;
+    font-family:inherit;font-weight:600;font-size:15px;cursor:pointer;
+    transition:opacity .15s ease;
+  }
+  .google-btn:hover{opacity:.88;}
+  .google-btn:disabled{opacity:.5;cursor:default;}
+  .google-btn svg{width:18px;height:18px;flex-shrink:0;}
+
+  .pill-btn{
+    background:transparent;border:1px solid var(--hairline);
+    color:var(--paper-text-dim);font-family:inherit;font-size:12px;
+    padding:6px 12px;border-radius:3px;cursor:pointer;
+    transition:color .12s ease,border-color .12s ease;
+  }
+  .pill-btn:hover{color:var(--paper-text);border-color:var(--brass-dim);}
+
+  #userbar{
+    display:flex;align-items:center;justify-content:flex-end;gap:12px;
+    font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11.5px;
+    color:var(--paper-text-dim);margin-bottom:26px;min-height:30px;
+  }
+  #userbar .ub-mail{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+  #log{
+    margin-top:24px;background:var(--ink-bg-raised);
+    border:1px solid var(--hairline);border-radius:5px;
+    padding:18px 20px;
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+    font-size:13px;line-height:1.75;white-space:pre-wrap;
+    overflow-x:auto;
+  }
+  #log:empty{display:none;}
+  .ok{color:var(--sage);}
+  .err{color:var(--danger);}
+  .dim{color:var(--paper-text-dim);}
+
+  .err-box{
+    margin-top:16px;font-size:13px;line-height:1.6;color:var(--danger);text-align:left;
+  }
+  .err-box code{
+    background:var(--ink-bg);padding:1px 5px;border-radius:3px;
+    font-family:'IBM Plex Mono',ui-monospace,monospace;
+  }
+  .foot{
+    margin-top:30px;padding-top:18px;border-top:1px solid var(--hairline);
+    font-size:12.5px;line-height:1.6;color:var(--paper-text-dim);
+  }
+  .foot a{color:var(--brass);}
+  @media (max-width:600px){
+    .wrap{padding:36px 18px 70px;}
+    h1{font-size:27px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="userbar"></div>
+  <p class="eyebrow">Verbesserungsprotokoll</p>
+  <h1>Backup</h1>
+  <p class="sub">Liest alle deine Sammlungen aus Firestore und speichert sie als JSON-Datei auf dieses Gerät. Reiner Lesezugriff — an der Datenbank ändert sich nichts.</p>
+  <div id="main"></div>
+  <p class="foot">Die Datei enthält Projekte, Einträge samt Unternotizen, den Altbestand, App-Ideen und To-dos. Bewahre sie an einem Ort auf, den du wiederfindest.</p>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+import { getFirestore, collection, getDocs }
+  from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBIq5Hq459a4RjJNgwVB0tyfP6I3_xW3tc",
+  authDomain: "verbesserungsprotokoll.firebaseapp.com",
+  projectId: "verbesserungsprotokoll",
+  storageBucket: "verbesserungsprotokoll.firebasestorage.app",
+  messagingSenderId: "739113569685",
+  appId: "1:739113569685:web:8e16278286d6f4f7cafa9c"
+};
+
+const fb = initializeApp(firebaseConfig);
+const db = getFirestore(fb);
+const auth = getAuth(fb);
+const provider = new GoogleAuthProvider();
+// Immer die Kontoauswahl zeigen, damit ein Kontowechsel moeglich bleibt
+provider.setCustomParameters({ prompt:'select_account' });
+
+const googleIcon =
+  '<svg viewBox="0 0 48 48" aria-hidden="true">'+
+  '<path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>'+
+  '<path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>'+
+  '<path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>'+
+  '<path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>'+
+  '</svg>';
+
+const mainEl = document.getElementById('main');
+const userbar = document.getElementById('userbar');
+
+function el(tag, props={}, kids=[]){
+  const n = document.createElement(tag);
+  for(const [k,v] of Object.entries(props)){
+    if(k==='class') n.className=v;
+    else if(k==='text') n.textContent=v;
+    else if(k==='html') n.innerHTML=v;
+    else n.setAttribute(k,v);
+  }
+  (Array.isArray(kids)?kids:[kids]).forEach(c=>{ if(c!=null) n.appendChild(typeof c==='string'?document.createTextNode(c):c); });
+  return n;
+}
+
+function describeAuthError(err){
+  const code = (err && err.code ? String(err.code) : '').replace(/^auth\//,'');
+  if(code==='unauthorized-domain')
+    return 'Diese Domain ist in Firebase nicht freigegeben: <code>'+location.hostname+'</code>';
+  if(code==='popup-closed-by-user' || code==='cancelled-popup-request') return 'Anmeldung abgebrochen.';
+  if(code==='operation-not-allowed') return 'Google-Anmeldung ist im Firebase-Projekt nicht aktiviert.';
+  if(code==='network-request-failed') return 'Keine Verbindung zu Google – Internetverbindung prüfen.';
+  return 'Anmeldung fehlgeschlagen'+(code?(' ('+code+')'):'')+'.';
+}
+
+// ── Anmeldeschirm ───────────────────────────────────────────
+function renderLogin(){
+  userbar.innerHTML='';
+  mainEl.innerHTML='';
+  const btn = el('button',{class:'google-btn',html:googleIcon+'<span>Mit Google anmelden</span>'});
+  const errBox = el('div',{class:'err-box'});
+  btn.addEventListener('click',async()=>{
+    btn.disabled=true; errBox.innerHTML='';
+    try{ await signInWithPopup(auth,provider); }
+    catch(err){
+      const code=(err&&err.code)||'';
+      if(code==='auth/popup-blocked' || code==='auth/operation-not-supported-in-this-environment'){
+        try{ await signInWithRedirect(auth,provider); return; }
+        catch(e2){ console.error(e2); errBox.innerHTML=describeAuthError(e2); }
+      }else{ console.error(err); errBox.innerHTML=describeAuthError(err); }
+      btn.disabled=false;
+    }
+  });
+  mainEl.appendChild(el('div',{class:'card centered'},[
+    el('p',{class:'sub',style:'margin-bottom:20px;',text:'Melde dich mit dem Konto an, dem die Daten gehören.'}),
+    btn, errBox
+  ]));
+}
+
+// ── Export ──────────────────────────────────────────────────
+function plain(v){
+  if(v === null || typeof v !== 'object') return v;
+  if(typeof v.toDate === 'function') return { __timestamp: v.toDate().toISOString() };
+  if(Array.isArray(v)) return v.map(plain);
+  const o = {};
+  for(const k in v) o[k] = plain(v[k]);
+  return o;
+}
+
+async function dump(path){
+  const snap = await getDocs(collection(db, ...path));
+  const out = {};
+  snap.docs.forEach(d => { out[d.id] = plain(d.data()); });
+  return out;
+}
+
+function renderExport(user){
+  userbar.innerHTML='';
+  const out = el('button',{class:'pill-btn',text:'Abmelden'});
+  out.addEventListener('click',()=>signOut(auth).catch(e=>console.error(e)));
+  userbar.appendChild(el('span',{class:'ub-mail',text:user.email||user.displayName||''}));
+  userbar.appendChild(out);
+
+  mainEl.innerHTML='';
+  const btn = el('button',{class:'btn',text:'Backup jetzt erstellen'});
+  const logEl = el('div',{id:'log'});
+  mainEl.appendChild(el('div',{class:'card'},[btn]));
+  mainEl.appendChild(logEl);
+
+  function log(msg, cls){
+    const s = el('span', cls?{class:cls}:{});
+    s.textContent = msg + '\n';
+    logEl.appendChild(s);
+  }
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    logEl.innerHTML = '';
+    const backup = { exportedAt:new Date().toISOString(), project:firebaseConfig.projectId,
+                     account:user.email||'', data:{} };
+    let total = 0;
+    try{
+      for(const name of ['projects','appIdeas','todos','verbesserungsprotokoll']){
+        const docs = await dump([name]);
+        backup.data[name] = docs;
+        const n = Object.keys(docs).length;
+        total += n;
+        log(name.padEnd(24) + String(n).padStart(4) + ' Dokument(e)', n ? 'ok' : 'dim');
+      }
+      backup.data.entriesByProject = {};
+      for(const pid of Object.keys(backup.data.projects)){
+        const docs = await dump(['projects', pid, 'entries']);
+        const n = Object.keys(docs).length;
+        if(n){
+          backup.data.entriesByProject[pid] = docs;
+          total += n;
+          const nm = backup.data.projects[pid]?.name || pid;
+          log('  entries · ' + String(nm).slice(0,26).padEnd(26) + String(n).padStart(4) + ' Eintrag/Einträge', 'ok');
+        }
+      }
+
+      const blob = new Blob([JSON.stringify(backup,null,2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+      const a = el('a',{href:url, download:`verbesserungsprotokoll-backup-${stamp}.json`});
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 10000);
+
+      log('');
+      log(`Fertig – ${total} Dokumente gesichert. Die Datei wurde heruntergeladen.`, 'ok');
+    }catch(err){
+      console.error(err);
+      const code = (err&&err.code?String(err.code):'').replace(/^firestore\//,'');
+      log('');
+      if(code==='permission-denied' || code==='unauthenticated'){
+        log('Zugriff verweigert – dieses Konto ist in den Firestore-Regeln nicht freigeschaltet.', 'err');
+        log('Oben rechts abmelden und mit dem richtigen Google-Konto erneut anmelden.', 'dim');
+      }else{
+        log('Fehler: ' + (code || '') + ' ' + (err?.message || err), 'err');
+      }
+    }
+    btn.disabled = false;
+  });
+}
+
+onAuthStateChanged(auth, (user)=>{ user ? renderExport(user) : renderLogin(); });
+</script>
+</body>
+</html>
