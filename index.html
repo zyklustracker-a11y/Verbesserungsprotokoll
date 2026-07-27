@@ -347,6 +347,68 @@
   .idea-move{display:flex;gap:2px;align-items:center;margin-right:2px;}
   .ctrl-btn:disabled{opacity:.28;cursor:default;background:none;}
 
+  /* Gespeicherte Prompts */
+  .sp-form{margin-bottom:18px;}
+  .sp-form .field{margin-bottom:10px;}
+  .sp-form .field:last-of-type{margin-bottom:14px;}
+  .sp-form textarea{min-height:110px;font-family:'IBM Plex Mono',monospace;font-size:14px;}
+  .sp-form-actions{display:flex;gap:8px;flex-wrap:wrap;}
+  .sp-item{
+    background:var(--ink-bg-raised);
+    border:1px solid var(--hairline);
+    border-radius:5px;
+    padding:16px 18px;
+    margin-bottom:12px;
+  }
+  .sp-title{
+    font-family:'Fraunces',serif;
+    font-weight:500;
+    font-size:17.5px;
+    line-height:1.35;
+    margin:0 0 11px;
+    word-break:break-word;
+  }
+  .sp-body{
+    position:relative;
+    background:var(--ink-bg);
+    border:1px solid var(--hairline);
+    border-radius:4px;
+    padding:13px 15px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:13px;
+    line-height:1.6;
+    white-space:pre-wrap;
+    word-break:break-word;
+    overflow-wrap:anywhere;
+    max-height:170px;
+    overflow:hidden;
+  }
+  .sp-body.open{max-height:none;overflow:visible;}
+  /* Sanfte Kante, solange der Prompt eingeklappt ist */
+  .sp-body.clipped::after{
+    content:'';position:absolute;left:0;right:0;bottom:0;height:56px;
+    background:linear-gradient(to bottom,rgba(27,29,33,0),var(--ink-bg));
+    pointer-events:none;
+  }
+  .sp-toggle{
+    background:none;border:none;padding:9px 0 0;
+    font-family:'IBM Plex Mono',monospace;font-size:11px;
+    letter-spacing:.1em;text-transform:uppercase;
+    color:var(--paper-text-dim);cursor:pointer;
+    transition:color .12s ease;
+  }
+  .sp-toggle:hover{color:var(--brass);}
+  .sp-foot{
+    display:flex;align-items:center;justify-content:space-between;
+    flex-wrap:wrap;gap:8px 10px;
+    margin-top:12px;padding-top:10px;border-top:1px solid var(--hairline);
+  }
+  .sp-foot .meta{margin:0;}
+  .sp-actions{display:flex;gap:4px;flex-wrap:wrap;align-items:center;}
+  button.btn.sp-copy{height:38px;padding:0 18px;font-size:13px;min-width:112px;}
+  button.btn.sp-copy.copied,button.btn.sp-copy.copied:hover{background:var(--sage);color:#1b1d21;}
+  button.btn.sp-copy.failed,button.btn.sp-copy.failed:hover{background:var(--danger);color:#f4efe9;}
+
   /* To-dos */
   .todo-item{
     background:var(--ink-bg-raised);
@@ -562,6 +624,11 @@
     form.add-row .btn{width:100%;}
     .cp-copy-head{width:44px;padding:0;}
     .cp-copy-head .cp-copy-txt{display:none;}
+    .sp-form-actions .btn{width:100%;}
+    /* Kopieren ist die Hauptaktion – auf dem iPhone breit und sicher treffbar */
+    .sp-foot{flex-direction:column;align-items:stretch;}
+    .sp-actions{justify-content:space-between;}
+    button.btn.sp-copy{flex:1;height:44px;}
   }
 </style>
 </head>
@@ -661,6 +728,7 @@
   const projectsRef = collection(db,'projects');
   const ideasRef    = collection(db,'appIdeas');
   const todosRef    = collection(db,'todos');
+  const promptsRef  = collection(db,'savedPrompts');
 
   function entriesRefFor(project){
     return project.legacyCollection
@@ -695,6 +763,7 @@
   let unsubs = [];
   let projectsCache = [];
   let ideasCache = [];
+  let promptsCache = [];       // gespeicherte Prompts, nach order sortiert
   let signedIn = false;        // wird vom Auth-Gate am Dateiende gesetzt
   let ideasUnlocked = false;   // App-Ideen erst nach Code-Eingabe sichtbar (nur diese Sitzung)
 
@@ -767,6 +836,15 @@
       ideasSection.appendChild(buildIdeaForm());
       ideasSection.appendChild(ideasWrap);
       subscribeIdeas(ideasWrap);
+
+      // Gespeicherte Prompts – eigener Unterabschnitt, ebenfalls code-geschützt
+      const promptsWrap = el('div');
+      ideasSection.appendChild(el('div',{style:'border-top:1px solid var(--hairline);padding-top:30px;margin-top:34px;'},[
+        el('p',{class:'section-label',text:'📝 Gespeicherte Prompts'}),
+        buildPromptForm(),
+        promptsWrap
+      ]));
+      subscribePrompts(promptsWrap);
     }
 
     function showLocked(){
@@ -1266,6 +1344,200 @@
 
     // Leeres Feld → direkt in den Bearbeiten-Modus (mit Platzhalter-Textarea)
     if(current && current.trim()) renderView(); else renderEdit();
+  }
+
+  // ══════════════════════════════════════════════════════════
+  //  GESPEICHERTE PROMPTS
+  //  Eigene Sammlung wiederverwendbarer Prompt-Texte, jeweils mit
+  //  Titel, Prompt-Feld und Ein-Klick-Kopieren. Liegt unter „App-Ideen"
+  //  und ist damit an denselben Code gebunden.
+  // ══════════════════════════════════════════════════════════
+
+  // Kopier-Feedback für die schlichten Prompt-Buttons (Beschriftung kurz umschalten).
+  function flashCopyBtn(btn, success){
+    if(!btn) return;
+    if(btn._flashTimer) clearTimeout(btn._flashTimer);
+    if(btn._origText==null) btn._origText = btn.textContent;
+    btn.textContent = success ? 'Kopiert!' : 'Fehlgeschlagen';
+    btn.classList.remove('copied','failed');
+    btn.classList.add(success ? 'copied' : 'failed');
+    btn._flashTimer = setTimeout(()=>{
+      if(btn._origText!=null){ btn.textContent = btn._origText; btn._origText=null; }
+      btn.classList.remove('copied','failed');
+      btn._flashTimer=null;
+    },1500);
+  }
+
+  function buildPromptForm(){
+    const titleInput = el('input',{type:'text',maxlength:'160',
+      placeholder:'Kurz: worum geht es in dem Prompt?'});
+    const ta = el('textarea',{rows:'6',maxlength:'50000',
+      placeholder:'Vollständigen Prompt-Text hier hineinschreiben …'});
+    const btn = el('button',{class:'btn',text:'Prompt speichern'});
+    const form = el('form',{class:'sp-form'},[
+      el('div',{class:'field'},[el('label',{text:'Titel'}),titleInput]),
+      el('div',{class:'field'},[el('label',{text:'Prompt'}),ta]),
+      el('div',{class:'sp-form-actions'},[btn])
+    ]);
+    form.addEventListener('submit',async(e)=>{
+      e.preventDefault();
+      const text = ta.value.trim();
+      if(!text){ ta.focus(); return; }
+      const title = titleInput.value.trim();
+      btn.disabled=true;
+      try{
+        // Neue Prompts oben einsortieren (kleinster order-Wert = oben).
+        const minOrder = promptsCache.reduce((m,d)=>Math.min(m, d.order??0), 0);
+        await addDoc(promptsRef,{title,text,order:minOrder-1,createdAt:serverTimestamp()});
+        titleInput.value=''; ta.value='';
+      }catch(err){ console.error(err); alert('Prompt konnte nicht gespeichert werden.'); }
+      btn.disabled=false; titleInput.focus();
+    });
+    return form;
+  }
+
+  function subscribePrompts(container){
+    const q = query(promptsRef, orderBy('createdAt','desc'));
+    track(onSnapshot(q,(snap)=>{
+      let docs = snap.docs.map(d=>({id:d.id, ...d.data()}));
+
+      // Migration: Prompts ohne order-Feld anhand der aktuellen Anzeige-
+      // reihenfolge (createdAt desc) mit fortlaufenden Werten versehen.
+      if(docs.some(d=> typeof d.order !== 'number')){
+        const batch = writeBatch(db);
+        docs.forEach((d,i)=>{
+          if(typeof d.order !== 'number'){
+            d.order = i;
+            batch.update(doc(db,'savedPrompts',d.id),{order:i});
+          }
+        });
+        batch.commit().catch(err=>console.error(err));
+      }
+
+      docs.sort((a,b)=> (a.order??0) - (b.order??0));
+      promptsCache = docs;
+
+      container.innerHTML='';
+      if(docs.length===0){
+        container.appendChild(el('p',{class:'empty',
+          text:'Noch keine Prompts gespeichert – leg oben deinen ersten an.'}));
+        return;
+      }
+      docs.forEach((d,i)=> container.appendChild(buildPromptItem(d.id,d,i,docs.length)));
+    },(err)=>console.error(err)));
+  }
+
+  async function movePrompt(index,dir){
+    const target = index+dir;
+    if(target<0 || target>=promptsCache.length) return;
+    const a = promptsCache[index], b = promptsCache[target];
+    const oa = (a.order ?? index), ob = (b.order ?? target);
+    try{
+      const batch = writeBatch(db);
+      batch.update(doc(db,'savedPrompts',a.id),{order:ob});
+      batch.update(doc(db,'savedPrompts',b.id),{order:oa});
+      await batch.commit();
+    }catch(err){ console.error(err); alert('Reihenfolge konnte nicht geändert werden.'); }
+  }
+
+  function buildPromptItem(id,data,index,total){
+    const item = el('div',{class:'sp-item'});
+    const text = data.text || '';
+
+    const titleDiv = el('div',{class:'sp-title',text:(data.title||'').trim() || 'Ohne Titel'});
+    const bodyDiv  = el('div',{class:'sp-body',text:text});
+    const toggle   = el('button',{class:'sp-toggle',type:'button',text:'Mehr anzeigen',
+      style:'display:none;'});
+    toggle.addEventListener('click',()=>{
+      const open = bodyDiv.classList.toggle('open');
+      bodyDiv.classList.toggle('clipped', !open);
+      toggle.textContent = open ? 'Weniger anzeigen' : 'Mehr anzeigen';
+    });
+    // Erst nach dem Einhängen ist messbar, ob der Prompt überhaupt abgeschnitten wird.
+    requestAnimationFrame(()=>{
+      if(bodyDiv.scrollHeight > bodyDiv.clientHeight + 2){
+        bodyDiv.classList.add('clipped');
+        toggle.style.display='inline-block';
+      }
+    });
+
+    const foot = el('div',{class:'sp-foot'});
+    foot.appendChild(el('div',{class:'meta',
+      text:(data.updatedAt?'bearb. ':'')+fmtDate(data.updatedAt||data.createdAt)}));
+    const actions = el('div',{class:'sp-actions'});
+
+    // Reihenfolge ändern (wie bei den App-Ideen)
+    const move = el('div',{class:'idea-move'});
+    const upBtn   = el('button',{class:'ctrl-btn',title:'Nach oben',text:'▲',onclick:()=>movePrompt(index,-1)});
+    const downBtn = el('button',{class:'ctrl-btn',title:'Nach unten',text:'▼',onclick:()=>movePrompt(index,1)});
+    upBtn.disabled   = (index===0);
+    downBtn.disabled = (index===total-1);
+    move.appendChild(upBtn); move.appendChild(downBtn);
+    actions.appendChild(move);
+
+    // Kopieren: muss synchron im Klick-Handler starten (iOS Safari).
+    const copyBtn = el('button',{class:'btn small sp-copy',type:'button',text:'Kopieren'});
+    copyBtn.disabled = !text;
+    copyBtn.addEventListener('click',()=>{
+      if(!text) return;
+      copyTextSync(text).then(ok=>{ flashCopyBtn(copyBtn, ok!==false); });
+    });
+    actions.appendChild(copyBtn);
+
+    const editBtn = el('button',{class:'row-btn',title:'Bearbeiten',text:'✎',style:'opacity:.85;'});
+    const delBtn  = el('button',{class:'row-btn del',title:'Löschen',text:'✕',style:'opacity:.85;'});
+    actions.appendChild(editBtn); actions.appendChild(delBtn);
+    foot.appendChild(actions);
+
+    delBtn.addEventListener('click',async()=>{
+      if(!confirm('Diesen gespeicherten Prompt löschen?')) return;
+      try{ await deleteDoc(doc(db,'savedPrompts',id)); }
+      catch(err){ console.error(err); alert('Konnte nicht gelöscht werden.'); }
+    });
+
+    editBtn.addEventListener('click',()=>{
+      const titleInput = el('input',{type:'text',maxlength:'160',placeholder:'Titel'});
+      titleInput.value = data.title || '';
+      const ta = el('textarea',{rows:'10',maxlength:'50000',placeholder:'Prompt-Text'});
+      ta.style.fontFamily = "'IBM Plex Mono',monospace";
+      ta.value = text;
+      const save   = el('button',{class:'btn small',text:'Speichern'});
+      const cancel = el('button',{class:'btn small ghost',text:'Abbrechen'});
+      const box = el('div',{},[
+        el('div',{class:'field'},[el('label',{text:'Titel'}),titleInput]),
+        el('div',{class:'field'},[el('label',{text:'Prompt'}),ta]),
+        el('div',{class:'edit-actions'},[save,cancel])
+      ]);
+      restore(box);
+      titleInput.focus();
+
+      cancel.addEventListener('click',()=>{ restore(null); });
+      save.addEventListener('click',async()=>{
+        const val = ta.value.trim();
+        if(!val){ ta.focus(); return; }
+        save.disabled=true;
+        try{
+          await updateDoc(doc(db,'savedPrompts',id),{
+            title:titleInput.value.trim(), text:val, updatedAt:serverTimestamp()
+          });
+        }catch(err){
+          console.error(err); alert('Konnte nicht gespeichert werden.'); save.disabled=false;
+        }
+      });
+    });
+
+    // Inhalt austauschen (Bearbeiten) bzw. Ansicht wiederherstellen
+    function restore(editBox){
+      item.innerHTML='';
+      if(editBox){ item.appendChild(editBox); return; }
+      item.appendChild(titleDiv);
+      item.appendChild(bodyDiv);
+      item.appendChild(toggle);
+      item.appendChild(foot);
+    }
+
+    restore(null);
+    return item;
   }
 
   // ══════════════════════════════════════════════════════════

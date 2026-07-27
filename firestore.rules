@@ -46,6 +46,11 @@ service cloud.firestore {
       allow read, write: if isOwner();
     }
 
+    // Gespeicherte Prompts (Bereich „App-Ideen")
+    match /savedPrompts/{promptId} {
+      allow read, write: if isOwner();
+    }
+
     // To-dos
     match /todos/{todoId} {
       allow read, write: if isOwner();
