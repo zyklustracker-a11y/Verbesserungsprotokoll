@@ -443,6 +443,58 @@
     font-family:'IBM Plex Mono',monospace;color:var(--brass);
   }
 
+  /* Anmeldung */
+  .login-screen{
+    min-height:70vh;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .login-card{
+    background:var(--ink-bg-raised);
+    border:1px solid var(--hairline);
+    border-left:3px solid var(--brass);
+    border-radius:5px;
+    padding:34px 32px;
+    width:100%; max-width:420px;
+    text-align:center;
+  }
+  .login-card h1{font-size:26px;margin:0 0 10px;}
+  .login-card .sub{margin-bottom:26px;}
+  .google-btn{
+    display:inline-flex; align-items:center; justify-content:center; gap:11px;
+    width:100%; height:50px;
+    background:var(--paper-text); color:#1b1d21;
+    border:none; border-radius:3px;
+    font-family:'Inter',sans-serif; font-weight:600; font-size:15px;
+    cursor:pointer; transition:opacity .15s ease;
+  }
+  .google-btn:hover{opacity:.88;}
+  .google-btn:disabled{opacity:.5;cursor:default;}
+  .google-btn svg{width:18px;height:18px;flex-shrink:0;}
+  .login-err{
+    margin-top:18px; font-size:13px; line-height:1.55;
+    color:var(--danger); text-align:left;
+  }
+  .login-err code{
+    background:var(--ink-bg); padding:1px 5px; border-radius:3px;
+    font-family:'IBM Plex Mono',monospace;
+  }
+
+  /* Konto-Leiste oben rechts */
+  #userbar{
+    position:fixed; top:0; right:0; z-index:40;
+    display:flex; align-items:center; gap:12px;
+    padding:12px 16px;
+    font-family:'IBM Plex Mono',monospace; font-size:11.5px;
+    color:var(--paper-text-dim);
+    background:linear-gradient(to bottom,var(--ink-bg) 55%,transparent);
+  }
+  #userbar:empty{display:none;}
+  #userbar .ub-mail{max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  @media (max-width:600px){
+    #userbar{padding:8px 12px;}
+    #userbar .ub-mail{display:none;}
+  }
+
   /* Modal */
   .modal-overlay{
     position:fixed;inset:0;background:rgba(10,11,13,.72);
@@ -486,7 +538,8 @@
   }
 
   @media (max-width:600px){
-    .wrap{padding:36px 18px 80px;}
+    /* oben etwas mehr Luft, damit der Abmelden-Button nicht am Inhalt klebt */
+    .wrap{padding:54px 18px 80px;}
     h1{font-size:30px;}
     /* Auf dem Handy zählt jeder Pixel Breite für den Notiztext */
     li.entry{gap:10px;}
@@ -501,6 +554,7 @@
 </style>
 </head>
 <body>
+<div id="userbar"></div>
 <div class="wrap" id="app"></div>
 
 <script type="module">
@@ -510,6 +564,10 @@
     doc, getDoc, setDoc, updateDoc, deleteDoc, getDocs,
     serverTimestamp, query, orderBy, writeBatch
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+  import {
+    getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
+    signOut, onAuthStateChanged
+  } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 
   // ─────────────────────────────────────────────────────────
   // FIREBASE-KONFIGURATION (unverändert übernommen)
@@ -558,7 +616,7 @@
   function describeError(err){
     const code = (err && err.code ? String(err.code) : '').replace(/^firestore\//,'');
     if(code==='permission-denied' || code==='unauthenticated')
-      return 'Zugriff verweigert ('+code+') – die Firestore-Regeln müssen auf "allow read, write: if true" stehen.';
+      return 'Zugriff verweigert ('+code+') – dieses Konto ist in den Firestore-Regeln nicht freigeschaltet.';
     if(code==='unavailable')
       return 'Datenbank nicht erreichbar (unavailable) – Internetverbindung prüfen.';
     if(code==='failed-precondition')
@@ -581,6 +639,8 @@
 
   const fb = initializeApp(firebaseConfig);
   const db = getFirestore(fb);
+  const auth = getAuth(fb);
+  const googleProvider = new GoogleAuthProvider();
 
   const projectsRef = collection(db,'projects');
   const ideasRef    = collection(db,'appIdeas');
@@ -618,6 +678,7 @@
   // ── Router ────────────────────────────────────────────────
   let unsubs = [];
   let projectsCache = [];
+  let signedIn = false;   // wird vom Auth-Gate am Dateiende gesetzt
 
   function track(fn){ if(fn) unsubs.push(fn); }
   function cleanup(){ unsubs.forEach(fn=>{ try{fn();}catch(e){} }); unsubs=[]; }
@@ -632,7 +693,8 @@
     else { renderHome(); }
     window.scrollTo(0,0);
   }
-  window.addEventListener('hashchange', router);
+  // Abgemeldet bleibt der Anmeldeschirm stehen, auch wenn sich der Hash ändert
+  window.addEventListener('hashchange', ()=>{ if(signedIn) router(); });
 
   // ══════════════════════════════════════════════════════════
   //  ANSICHT 1 · PROJEKTÜBERSICHT (Startseite)
@@ -1309,9 +1371,91 @@
   }
 
   // ══════════════════════════════════════════════════════════
-  //  START · ohne Login direkt in die App
+  //  ANMELDUNG · Google-Login als Zugang zur App
   // ══════════════════════════════════════════════════════════
-  router();
+  const googleIcon =
+    '<svg viewBox="0 0 48 48" aria-hidden="true">'+
+    '<path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>'+
+    '<path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>'+
+    '<path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>'+
+    '<path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>'+
+    '</svg>';
+
+  const userbar = document.getElementById('userbar');
+
+  function describeAuthError(err){
+    const code = (err && err.code ? String(err.code) : '').replace(/^auth\//,'');
+    if(code==='unauthorized-domain')
+      return 'Diese Domain ist in Firebase nicht freigegeben. In der Firebase Console unter '+
+             '<strong>Authentication → Settings → Authorized domains</strong> die Domain '+
+             '<code>'+location.hostname+'</code> hinzufügen.';
+    if(code==='popup-closed-by-user' || code==='cancelled-popup-request')
+      return 'Anmeldung abgebrochen.';
+    if(code==='operation-not-allowed')
+      return 'Google-Anmeldung ist im Firebase-Projekt nicht aktiviert '+
+             '(<strong>Authentication → Sign-in method → Google</strong>).';
+    if(code==='network-request-failed')
+      return 'Keine Verbindung zu Google – Internetverbindung prüfen.';
+    return 'Anmeldung fehlgeschlagen'+(code?(' ('+code+')'):'')+'.';
+  }
+
+  function renderLogin(){
+    cleanup();
+    userbar.innerHTML='';
+    app.classList.remove('view-project');
+    app.innerHTML='';
+
+    const btn = el('button',{class:'google-btn',html:googleIcon+'<span>Mit Google anmelden</span>'});
+    const errBox = el('div',{class:'login-err'});
+
+    btn.addEventListener('click',async()=>{
+      btn.disabled=true; errBox.innerHTML='';
+      try{
+        await signInWithPopup(auth,googleProvider);
+        // Weiter geht es über onAuthStateChanged
+      }catch(err){
+        const code = (err && err.code) || '';
+        // Popup geblockt (häufig auf iOS/Safari) → auf Weiterleitung ausweichen
+        if(code==='auth/popup-blocked' || code==='auth/operation-not-supported-in-this-environment'){
+          try{ await signInWithRedirect(auth,googleProvider); return; }
+          catch(err2){ console.error(err2); errBox.innerHTML=describeAuthError(err2); }
+        }else{
+          console.error(err);
+          errBox.innerHTML=describeAuthError(err);
+        }
+        btn.disabled=false;
+      }
+    });
+
+    app.appendChild(el('div',{class:'login-screen'},[
+      el('div',{class:'login-card'},[
+        el('p',{class:'eyebrow',text:'Verbesserungsprotokoll'}),
+        el('h1',{text:'Anmelden'}),
+        el('p',{class:'sub',text:'Deine Projekte, Einträge und Notizen sind nur nach Anmeldung zugänglich.'}),
+        btn,
+        errBox
+      ])
+    ]));
+  }
+
+  function renderUserbar(user){
+    userbar.innerHTML='';
+    const out = el('button',{class:'pill-btn',text:'Abmelden'});
+    out.addEventListener('click',()=>{
+      signOut(auth).catch(err=>{ console.error(err); alert('Abmelden fehlgeschlagen.'); });
+    });
+    userbar.appendChild(el('span',{class:'ub-mail',text:user.email||user.displayName||''}));
+    userbar.appendChild(out);
+  }
+
+  // ══════════════════════════════════════════════════════════
+  //  START · erst nach erfolgreicher Anmeldung in die App
+  // ══════════════════════════════════════════════════════════
+  onAuthStateChanged(auth,(user)=>{
+    signedIn = !!user;
+    if(user){ renderUserbar(user); router(); }
+    else { renderLogin(); }
+  });
 </script>
 </body>
 </html>

@@ -1,0 +1,60 @@
+rules_version = '2';
+
+// ═══════════════════════════════════════════════════════════════════
+//  Firestore-Regeln · Verbesserungsprotokoll
+//
+//  Einsetzen in: Firebase Console → Firestore Database → Regeln
+//
+//  WICHTIG · Vor dem Veröffentlichen die UID unten ersetzen:
+//    1. App aufrufen und einmal mit Google anmelden
+//    2. Firebase Console → Authentication → Users
+//    3. Die "User UID" kopieren (ca. 28 Zeichen)
+//    4. Unten bei OWNER_UID einsetzen, dann "Veröffentlichen"
+//
+//  Warum diese Bauart:
+//  Die Regel prüft, WER fragt – nicht, wem ein Dokument gehört.
+//  Die bestehenden Daten haben kein Besitzer-Feld, weil sie ohne
+//  Login angelegt wurden. Eine Regel auf Dokumentebene
+//  (z. B. resource.data.ownerId == request.auth.uid) würde deshalb
+//  sämtliche Altdaten unzugänglich machen. So bleibt alles erhalten,
+//  ohne dass ein einziges Dokument angefasst werden muss.
+// ═══════════════════════════════════════════════════════════════════
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner() {
+      return request.auth != null
+          && request.auth.uid == 'OWNER_UID';
+    }
+
+    // Projekte samt Einträgen (Verbesserungsvorschläge mit Unternotizen)
+    match /projects/{projectId} {
+      allow read, write: if isOwner();
+
+      match /entries/{entryId} {
+        allow read, write: if isOwner();
+      }
+    }
+
+    // Ursprüngliches Protokoll (Altbestand, vor der Projekt-Struktur)
+    match /verbesserungsprotokoll/{docId} {
+      allow read, write: if isOwner();
+    }
+
+    // App-Ideen inkl. Konzept- und Prompt-Texten
+    match /appIdeas/{ideaId} {
+      allow read, write: if isOwner();
+    }
+
+    // To-dos
+    match /todos/{todoId} {
+      allow read, write: if isOwner();
+    }
+
+    // Alles andere ist gesperrt
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
