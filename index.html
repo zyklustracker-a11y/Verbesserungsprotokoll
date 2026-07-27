@@ -1508,7 +1508,10 @@
   onAuthStateChanged(auth,(user)=>{
     signedIn = !!user;
     if(user){ renderUserbar(user); router(); }
-    else { renderLogin(); }
+    else {
+      ideasUnlocked = false;   // nach dem Abmelden wird der Code erneut verlangt
+      renderLogin();
+    }
   });
 </script>
 </body>
