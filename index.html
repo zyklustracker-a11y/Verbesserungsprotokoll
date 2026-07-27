@@ -25,6 +25,10 @@
     --sage:#7a9b76;
     --sage-dim:#4f6a4c;
     --danger:#a5645a;
+    /* Spaltenbreiten: Startseite kompakt, Projektansicht breit,
+       damit lange Unternotizen in die Breite statt in die Höhe laufen */
+    --wrap-max:820px;
+    --wrap-max-wide:1180px;
   }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;}
@@ -36,10 +40,13 @@
     -webkit-font-smoothing:antialiased;
   }
   .wrap{
-    max-width:820px;
+    max-width:var(--wrap-max);
     margin:0 auto;
     padding:56px 28px 100px;
   }
+  /* Projektansicht darf den Bildschirm breiter nutzen: lange Notizen
+     brauchen dadurch deutlich weniger Zeilen und die Liste bleibt überschaubar. */
+  .wrap.view-project{max-width:var(--wrap-max-wide);}
   header.app-head{
     margin-bottom:40px;
     border-bottom:1px solid var(--hairline);
@@ -277,6 +284,10 @@
     border-left:2px solid var(--hairline);
     white-space:pre-wrap;
     word-break:break-word;
+    overflow-wrap:anywhere;
+    /* volle Breite der Eintragsspalte nutzen – keine künstliche Begrenzung */
+    width:100%;
+    max-width:none;
   }
   .meta{
     font-family:'IBM Plex Mono',monospace;
@@ -468,9 +479,19 @@
   .icon-opt.sel{border-color:var(--brass);background:var(--ink-bg-raised2);}
   .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:26px;}
 
+  /* Mittlere Breiten: Innenabstand schrumpfen, damit die Notizspalte
+     auch auf Tablets/kleineren Laptops möglichst viel Breite behält. */
+  @media (max-width:900px){
+    .wrap{padding:48px 20px 90px;}
+  }
+
   @media (max-width:600px){
     .wrap{padding:36px 18px 80px;}
     h1{font-size:30px;}
+    /* Auf dem Handy zählt jeder Pixel Breite für den Notiztext */
+    li.entry{gap:10px;}
+    .idx{min-width:22px;}
+    .entry-note{padding-left:10px;}
     .home-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:11px;}
     form.add-row{flex-direction:column;}
     form.add-row .btn{width:100%;}
@@ -605,6 +626,8 @@
     cleanup();
     const hash = location.hash || '#/';
     const m = hash.match(/^#\/project\/(.+)$/);
+    // Projektansicht bekommt die breite Spalte (siehe .wrap.view-project)
+    app.classList.toggle('view-project', !!m);
     if(m){ renderProject(decodeURIComponent(m[1])); }
     else { renderHome(); }
     window.scrollTo(0,0);
