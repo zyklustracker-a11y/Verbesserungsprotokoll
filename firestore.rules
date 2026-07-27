@@ -5,11 +5,10 @@ rules_version = '2';
 //
 //  Einsetzen in: Firebase Console → Firestore Database → Regeln
 //
-//  WICHTIG · Vor dem Veröffentlichen die UID unten ersetzen:
-//    1. App aufrufen und einmal mit Google anmelden
-//    2. Firebase Console → Authentication → Users
-//    3. Die "User UID" kopieren (ca. 28 Zeichen)
-//    4. Unten bei OWNER_UID einsetzen, dann "Veröffentlichen"
+//  Freigeschaltet ist genau ein Konto: die UID in isOwner().
+//  Soll spaeter ein weiteres Konto Zugriff bekommen, dessen UID in der
+//  Firebase Console unter Authentication → Users ablesen und die
+//  Bedingung in isOwner() um ein zweites "||" erweitern.
 //
 //  Warum diese Bauart:
 //  Die Regel prüft, WER fragt – nicht, wem ein Dokument gehört.
@@ -25,7 +24,7 @@ service cloud.firestore {
 
     function isOwner() {
       return request.auth != null
-          && request.auth.uid == 'OWNER_UID';
+          && request.auth.uid == 'iTzgizFufKfOYNuFgWzGAVTODfc2';
     }
 
     // Projekte samt Einträgen (Verbesserungsvorschläge mit Unternotizen)
