@@ -28,6 +28,18 @@
     --sage:#7a9b76;
     --sage-dim:#4f6a4c;
     --danger:#a5645a;
+    /* Hosting-Badges: eine eigene Farbe je bekanntem Anbieter. Alle Töne sind
+       bewusst hell genug, damit die dunkle Schrift (#1b1d21) gut lesbar bleibt.
+       Unbekannte Hosts bekommen kein eigenes Token, sondern das neutrale Badge. */
+    --host-netlify:#5cb8b2;
+    --host-vercel:#ced1d8;
+    --host-render:#7fa7e8;
+    --host-fly:#b191d6;
+    --host-firebase:#e6b34c;
+    --host-railway:#d18fb0;
+    --host-cloudflare:#e8934e;
+    --host-ghpages:#8fa8c8;
+    --host-vps:#97b892;
     /* Spaltenbreiten: Startseite kompakt, Projektansicht breit,
        damit lange Unternotizen in die Breite statt in die Höhe laufen */
     --wrap-max:820px;
@@ -439,6 +451,110 @@
   .pill-btn:hover{color:var(--paper-text);background:var(--ink-bg);}
   .pill-btn.has{color:var(--brass);border-color:var(--brass-dim);}
 
+  /* Hosting: Zeile unter dem Projekttitel */
+  .host-bar{margin-top:18px;}
+  .host-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+  .host-badge{
+    display:inline-flex;
+    align-items:center;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    color:#1b1d21;                 /* dunkle Schrift auf hellem Badge */
+    background:var(--paper-text-dim);
+    padding:5px 10px;
+    border-radius:3px;
+    white-space:nowrap;
+    max-width:100%;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  /* Unbekannte Hosts: neutral, aber weiterhin gut lesbar */
+  .host-badge.neutral{
+    background:var(--ink-bg-raised2);
+    color:var(--paper-text);
+    border:1px solid var(--hairline);
+    padding:4px 9px;
+  }
+  .host-badge.netlify{background:var(--host-netlify);}
+  .host-badge.vercel{background:var(--host-vercel);}
+  .host-badge.render{background:var(--host-render);}
+  .host-badge.fly{background:var(--host-fly);}
+  .host-badge.firebase{background:var(--host-firebase);}
+  .host-badge.railway{background:var(--host-railway);}
+  .host-badge.cloudflare{background:var(--host-cloudflare);}
+  .host-badge.ghpages{background:var(--host-ghpages);}
+  .host-badge.vps{background:var(--host-vps);}
+  /* Kleines Badge in der Projektliste */
+  .host-badge.mini{
+    font-size:10px;
+    padding:3px 7px;
+    margin-top:8px;
+    align-self:flex-start;
+  }
+  .host-badge.mini.neutral{padding:2px 6px;}
+  /* Live / Repo / Dashboard – als Link gestylte Pill mit sicherem Tap-Ziel */
+  a.host-link,button.host-link{
+    display:inline-flex;
+    align-items:center;
+    min-height:34px;
+    padding:0 13px;
+    text-decoration:none;
+    font-size:12.5px;
+  }
+  .host-edit{
+    background:none;
+    border:none;
+    color:var(--paper-text-dim);
+    cursor:pointer;
+    font-size:15px;
+    line-height:1;
+    padding:8px 10px;
+    border-radius:3px;
+    transition:color .12s ease, background .12s ease;
+  }
+  .host-edit:active{background:var(--ink-bg);color:var(--paper-text);}
+  @media (hover:hover) and (pointer:fine){
+    .host-edit:hover{color:var(--paper-text);background:var(--ink-bg);}
+  }
+  .host-note{
+    font-size:12px;
+    line-height:1.5;
+    color:var(--paper-text-dim);
+    margin:9px 0 0;
+    word-break:break-word;
+  }
+
+  /* Hosting-Dialog */
+  .hg-hint{font-size:12.5px;line-height:1.55;color:var(--paper-text-dim);margin:0 0 18px;}
+  .hg-detect-row{display:flex;gap:10px;align-items:flex-start;}
+  .hg-detect-row input[type=text]{flex:1;min-width:0;}
+  .hg-status{
+    font-size:13px;line-height:1.55;margin:14px 0 0;
+    padding:12px 14px;border-radius:4px;
+    background:var(--ink-bg);border:1px solid var(--hairline);
+    color:var(--paper-text-dim);word-break:break-word;
+  }
+  .hg-status.err{border-color:var(--danger);color:var(--paper-text);}
+  .hg-status.ok{border-color:var(--sage-dim);color:var(--paper-text);}
+  .hg-section{
+    margin-top:26px;padding-top:22px;border-top:1px solid var(--hairline);
+  }
+  .hg-section > .section-label{margin:0 0 16px;}
+  /* Ausklappbarer JSON-Bereich */
+  .hg-json{margin-top:24px;border-top:1px solid var(--hairline);padding-top:18px;}
+  .hg-json summary{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--paper-text-dim);cursor:pointer;
+    list-style:none;padding:10px 0;
+  }
+  .hg-json summary::-webkit-details-marker{display:none;}
+  .hg-json summary::before{content:'▸ ';}
+  .hg-json[open] summary::before{content:'▾ ';}
+  .hg-json summary:hover{color:var(--paper-text);}
+  .hg-json textarea{font-family:'IBM Plex Mono',monospace;font-size:13px;min-height:120px;}
+
   /* Konzept / Prompt: Popup */
   .modal.wide{max-width:680px;}
   .modal.wide .modal-actions{flex-wrap:wrap;}
@@ -629,6 +745,12 @@
     .sp-foot{flex-direction:column;align-items:stretch;}
     .sp-actions{justify-content:space-between;}
     button.btn.sp-copy{flex:1;height:44px;}
+    /* Hosting: Links und Bearbeiten-Icon sicher treffbar halten */
+    a.host-link,button.host-link{min-height:42px;padding:0 16px;font-size:13px;}
+    .host-edit{font-size:17px;padding:11px 13px;}
+    /* Repo-Feld bekommt die volle Breite, der Button liegt darunter */
+    .hg-detect-row{flex-direction:column;}
+    .hg-detect-row .btn{width:100%;}
   }
 </style>
 </head>
@@ -921,6 +1043,10 @@
     card.appendChild(el('div',{class:'card-icon',text:p.icon||'📁'}));
     card.appendChild(el('p',{class:'card-name',text:p.name||'Ohne Namen'}));
 
+    // Host als kleines Badge – nur wenn für das Projekt einer hinterlegt ist
+    const hostTag = hostBadge(readHosting(p).host,{mini:true});
+    if(hostTag) card.appendChild(hostTag);
+
     const controls = el('div',{class:'card-controls'});
     controls.appendChild(el('button',{class:'ctrl-btn',title:'Nach oben',text:'▲',
       onclick:()=>moveProject(index,-1)}));
@@ -1022,6 +1148,377 @@
     }
     saveBtn.addEventListener('click',save);
     nameInput.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); save(); }});
+  }
+
+  // ══════════════════════════════════════════════════════════
+  //  HOSTING · Datenmodell, GitHub-Erkennung, Anzeige
+  // ══════════════════════════════════════════════════════════
+
+  // Alle Felder sind optional. Projekte ohne hosting-Feld (also der komplette
+  // Altbestand) laufen unverändert weiter – gelesen wird ausschliesslich über
+  // readHosting(), das jeden fehlenden Wert zu '' normalisiert. Es gibt daher
+  // bewusst KEINE Migration.
+  const HOSTING_FIELDS = ['host','liveUrl','repoUrl','dashboardUrl','deployNote'];
+
+  // Reihenfolge = Priorität: die erste passende Konfigurationsdatei gewinnt.
+  const HOST_SIGNATURES = [
+    { host:'Netlify',            files:['netlify.toml'] },
+    { host:'Vercel',             files:['vercel.json','.vercel'] },
+    { host:'Render',             files:['render.yaml'] },
+    { host:'Fly.io',             files:['fly.toml'] },
+    { host:'Firebase',           files:['firebase.json'] },
+    { host:'Railway',            files:['railway.json','railway.toml'] },
+    { host:'Cloudflare Pages',   files:['wrangler.toml'] },
+    { host:'Eigener Server/VPS', files:['Dockerfile','docker-compose.yml'] }
+  ];
+
+  // Bekannte Hosts bekommen eine eigene Badge-Farbe (siehe --host-* in :root),
+  // alles andere – auch selbst eingetippte Namen – wird neutral dargestellt.
+  const HOST_CLASSES = {
+    'netlify':'netlify',
+    'vercel':'vercel',
+    'render':'render',
+    'fly.io':'fly',
+    'firebase':'firebase',
+    'railway':'railway',
+    'cloudflare pages':'cloudflare',
+    'github pages':'ghpages',
+    'eigener server/vps':'vps'
+  };
+
+  // Defensiv lesen: liefert immer ein vollständiges Objekt mit Strings.
+  function readHosting(project){
+    const raw = (project && project.hosting && typeof project.hosting==='object' && !Array.isArray(project.hosting))
+      ? project.hosting : {};
+    const out = {};
+    HOSTING_FIELDS.forEach(k=>{ out[k] = typeof raw[k]==='string' ? raw[k].trim() : ''; });
+    out.updatedAt = raw.updatedAt || null;
+    return out;
+  }
+  function hostingIsEmpty(h){ return HOSTING_FIELDS.every(k=>!h[k]); }
+
+  // Links kommen aus Eingabefeldern, deshalb hier absichern: nur http(s) wird
+  // verlinkt, alles ohne Schema bekommt https:// davor (Tippkomfort),
+  // javascript:/data: o. Ä. werden verworfen.
+  function normalizeUrl(value){
+    const s = String(value||'').trim();
+    if(!s) return '';
+    if(/^https?:\/\//i.test(s)) return s;
+    if(/^[a-z][a-z0-9+.-]*:/i.test(s)) return '';   // fremdes Schema → nicht verlinken
+    if(/^\/\//.test(s)) return 'https:'+s;
+    return 'https://'+s;
+  }
+
+  function hostBadge(host,opts={}){
+    const name = String(host||'').trim();
+    if(!name) return null;
+    const cls = HOST_CLASSES[name.toLowerCase()] || 'neutral';
+    return el('span',{class:'host-badge '+cls+(opts.mini?' mini':''),text:name});
+  }
+
+  // ── Repo-Angabe zerlegen ──────────────────────────────────
+  // Akzeptiert:  https://github.com/owner/repo(.git)  ·  git@github.com:owner/repo.git
+  //              owner/repo  ·  URLs mit /tree/... oder Schrägstrich am Ende
+  function parseRepoInput(value){
+    let s = String(value||'').trim();
+    if(!s) return null;
+    s = s.replace(/^git\+/i,'').replace(/\/+$/,'');
+    let m = s.match(/^git@github\.com:([^/]+)\/(.+)$/i)
+         || s.match(/^(?:ssh:\/\/)?git@github\.com\/([^/]+)\/(.+)$/i)
+         || s.match(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/]+)\/([^/?#]+)/i)
+         || s.match(/^([^/\s]+)\/([^/\s?#]+)$/);
+    if(!m) return null;
+    const owner = m[1].trim();
+    const repo  = m[2].split(/[/?#]/)[0].replace(/\.git$/i,'').trim();
+    // GitHub erlaubt in Namen nur Buchstaben, Ziffern, . _ und -
+    if(!/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(repo)) return null;
+    return {owner,repo};
+  }
+
+  // ── GitHub-API ────────────────────────────────────────────
+  // Fehler werden hier schon in verständliche deutsche Sätze übersetzt,
+  // damit der Dialog sie nur noch anzeigen muss.
+  async function githubGet(url){
+    let res;
+    try{
+      res = await fetch(url,{headers:{'Accept':'application/vnd.github+json'}});
+    }catch(err){
+      throw new Error('Keine Verbindung zu GitHub – Internetverbindung prüfen und noch einmal versuchen.');
+    }
+    if(res.status===404) throw new Error('Repo nicht gefunden oder privat.');
+    if(res.status===403 || res.status===429)
+      throw new Error('GitHub-Limit erreicht (60 Abfragen pro Stunde), bitte später nochmal.');
+    if(!res.ok) throw new Error('GitHub antwortet mit Fehler '+res.status+' – bitte später nochmal versuchen.');
+    try{ return await res.json(); }
+    catch(err){ throw new Error('Die Antwort von GitHub war unlesbar – bitte später nochmal versuchen.'); }
+  }
+
+  async function detectHosting(owner,repo){
+    const base = 'https://api.github.com/repos/'+encodeURIComponent(owner)+'/'+encodeURIComponent(repo);
+    const meta = await githubGet(base);
+
+    const result = {
+      host:'',
+      liveUrl: (typeof meta.homepage==='string' && meta.homepage.trim()) ? meta.homepage.trim() : '',
+      repoUrl: (typeof meta.html_url==='string' && meta.html_url) ? meta.html_url : 'https://github.com/'+owner+'/'+repo,
+      dashboardUrl:'',
+      deployNote:''
+    };
+    const notes = [];
+    if(meta.default_branch) notes.push('Default-Branch: '+meta.default_branch);
+
+    // Root-Dateien lesen. Schlägt nur dieser Teil fehl, bleiben die Daten aus
+    // dem ersten Aufruf trotzdem erhalten – der Host wird dann eben leer.
+    let files = [], listError = '';
+    try{
+      const contents = await githubGet(base+'/contents/');
+      if(Array.isArray(contents)) files = contents.map(f=>String((f && f.name) || '').toLowerCase());
+    }catch(err){ listError = err.message; }
+
+    const hits = [];
+    HOST_SIGNATURES.forEach(sig=>{
+      const found = sig.files.find(name=>files.includes(name.toLowerCase()));
+      if(found) hits.push({host:sig.host, file:found});
+    });
+
+    if(hits.length){
+      result.host = hits[0].host;
+      notes.push(hits[0].file+' im Root gefunden');
+      if(hits.length>1){
+        notes.push('mehrere Konfigurationen gefunden ('+hits.map(h=>h.file).join(', ')+
+                   ') – „'+hits[0].host+'“ als wahrscheinlichster Host gewählt, bitte prüfen');
+      }
+    } else if(meta.has_pages===true){
+      result.host = 'GitHub Pages';
+      // Einziger Fall mit sinnvoll ableitbarem Dashboard – überall sonst steckt
+      // dort eine interne Projekt-ID, die nicht im Repo steht. Nichts raten.
+      result.dashboardUrl = 'https://github.com/'+owner+'/'+repo+'/settings/pages';
+      notes.push('GitHub Pages ist für das Repo aktiv');
+      if(!result.liveUrl){
+        result.liveUrl = repo.toLowerCase()===(owner+'.github.io').toLowerCase()
+          ? 'https://'+owner+'.github.io'
+          : 'https://'+owner+'.github.io/'+repo;
+      }
+    } else if(listError){
+      notes.push('Dateien im Root nicht lesbar ('+listError+')');
+    } else {
+      notes.push('keine bekannte Hosting-Konfiguration im Root gefunden');
+    }
+
+    result.deployNote = notes.join(' · ');
+    return result;
+  }
+
+  // ── JSON-Fallback ─────────────────────────────────────────
+  // Schneidet das erste vollständige JSON-Objekt heraus; Code-Fences und
+  // Fliesstext drumherum stören dadurch nicht.
+  function extractJsonObject(text){
+    const s = String(text||'');
+    const start = s.indexOf('{');
+    if(start<0) return '';
+    let depth=0, inStr=false, esc=false;
+    for(let i=start;i<s.length;i++){
+      const c = s[i];
+      if(inStr){
+        if(esc) esc=false;
+        else if(c==='\\') esc=true;
+        else if(c==='"') inStr=false;
+        continue;
+      }
+      if(c==='"') inStr=true;
+      else if(c==='{') depth++;
+      else if(c==='}'){ depth--; if(depth===0) return s.slice(start,i+1); }
+    }
+    return '';
+  }
+
+  function parseHostingJson(text){
+    if(!String(text||'').trim()) throw new Error('Es wurde noch kein JSON eingefügt.');
+    const block = extractJsonObject(text);
+    if(!block) throw new Error('Kein JSON-Objekt gefunden – erwartet wird ein Block mit geschweiften Klammern.');
+    let data;
+    try{ data = JSON.parse(block); }
+    catch(err){ throw new Error('Das JSON konnte nicht gelesen werden – bitte den Block noch einmal prüfen.'); }
+    if(!data || typeof data!=='object' || Array.isArray(data))
+      throw new Error('Erwartet wird ein JSON-Objekt mit den Hosting-Feldern.');
+
+    // Sowohl { "host": … } als auch { "hosting": { "host": … } } akzeptieren.
+    const src = (data.hosting && typeof data.hosting==='object' && !Array.isArray(data.hosting)) ? data.hosting : data;
+    const out = {}; let any = false;
+    HOSTING_FIELDS.forEach(k=>{                 // unbekannte Felder werden ignoriert
+      const v = src[k];
+      out[k] = (typeof v==='string' || typeof v==='number') ? String(v).trim() : '';
+      if(out[k]) any = true;
+    });
+    if(!any) throw new Error('Im JSON war keines der Felder host, liveUrl, repoUrl, dashboardUrl oder deployNote gefüllt.');
+    return out;
+  }
+
+  // ── Dialog: erkennen, prüfen, speichern ───────────────────
+  // onSaved() wird nach erfolgreichem Schreiben aufgerufen, damit der Aufrufer
+  // seine Anzeige neu zeichnen kann.
+  function openHostingModal(project,onSaved){
+    const current = readHosting(project);
+
+    const repoInput = el('input',{type:'text',placeholder:'z. B. owner/repo oder https://github.com/owner/repo',
+      value:current.repoUrl||'',autocapitalize:'off',autocorrect:'off',spellcheck:'false'});
+    const detectBtn = el('button',{class:'btn',type:'button',text:'Erkennen'});
+    const status = el('p',{class:'hg-status',text:'Repo eintragen und „Erkennen“ drücken – oder die Felder unten direkt selbst ausfüllen.'});
+
+    // Vorschau: alle Felder editierbar, damit sich jedes Ergebnis korrigieren lässt.
+    const inputs = {
+      host:         el('input',{type:'text',placeholder:'z. B. Netlify – eigener Name ist auch möglich',value:current.host,maxlength:'60'}),
+      liveUrl:      el('input',{type:'text',placeholder:'https://…',value:current.liveUrl,autocapitalize:'off',autocorrect:'off',spellcheck:'false'}),
+      repoUrl:      el('input',{type:'text',placeholder:'https://github.com/…',value:current.repoUrl,autocapitalize:'off',autocorrect:'off',spellcheck:'false'}),
+      dashboardUrl: el('input',{type:'text',placeholder:'Optional – z. B. Netlify-Projektseite',value:current.dashboardUrl,autocapitalize:'off',autocorrect:'off',spellcheck:'false'}),
+      deployNote:   el('textarea',{placeholder:'Kurze Notiz zum Deployment',rows:'2',maxlength:'500'})
+    };
+    inputs.deployNote.value = current.deployNote;
+
+    function fillPreview(data){
+      HOSTING_FIELDS.forEach(k=>{ inputs[k].value = data[k] || ''; });
+    }
+    function setStatus(msg,kind){
+      status.className = 'hg-status'+(kind?' '+kind:'');
+      status.textContent = msg;
+    }
+
+    async function runDetect(){
+      const parsed = parseRepoInput(repoInput.value);
+      if(!parsed){
+        // Auch hier bleibt das Formular editierbar – manuell weitermachen geht immer.
+        setStatus('Die Repo-Angabe wurde nicht verstanden. Möglich sind z. B. owner/repo, '+
+                  'https://github.com/owner/repo oder git@github.com:owner/repo.git','err');
+        repoInput.focus();
+        return;
+      }
+      detectBtn.disabled = true;
+      setStatus('Frage GitHub nach '+parsed.owner+'/'+parsed.repo+' …');
+      try{
+        const data = await detectHosting(parsed.owner,parsed.repo);
+        fillPreview(data);
+        setStatus(data.host
+          ? ('Erkannt: '+data.host+'. Bitte unten prüfen und bei Bedarf korrigieren.')
+          : 'Kein bekannter Host erkannt – Repo-Link ist eingetragen, den Host bitte selbst ergänzen.',
+          data.host ? 'ok' : null);
+      }catch(err){
+        console.error(err);
+        // Fehlerfall: Felder bleiben stehen, nur der Repo-Link wird vorbelegt.
+        if(!inputs.repoUrl.value) inputs.repoUrl.value = 'https://github.com/'+parsed.owner+'/'+parsed.repo;
+        setStatus(err.message+' Die Felder unten lassen sich trotzdem von Hand ausfüllen.','err');
+      }
+      detectBtn.disabled = false;
+    }
+    detectBtn.addEventListener('click',runDetect);
+    repoInput.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); runDetect(); }});
+
+    // JSON-Fallback (eingeklappt)
+    const jsonArea = el('textarea',{placeholder:'JSON-Block hier einfügen – Text oder ```-Zeilen drumherum sind egal.',rows:'6'});
+    const jsonBtn  = el('button',{class:'btn small ghost',type:'button',text:'JSON übernehmen'});
+    const jsonMsg  = el('p',{class:'hg-status',style:'margin-top:12px;',text:'Erwartet werden die Felder host, liveUrl, repoUrl, dashboardUrl und deployNote. Unbekannte Felder werden ignoriert.'});
+    jsonBtn.addEventListener('click',()=>{
+      try{
+        fillPreview(parseHostingJson(jsonArea.value));
+        jsonMsg.className='hg-status ok';
+        jsonMsg.textContent='Übernommen – bitte oben in der Vorschau prüfen und dann speichern.';
+        setStatus('Werte aus dem eingefügten JSON übernommen.','ok');
+      }catch(err){
+        jsonMsg.className='hg-status err';
+        jsonMsg.textContent=err.message;
+      }
+    });
+    const jsonBox = el('details',{class:'hg-json'},[
+      el('summary',{text:'JSON einfügen'}),
+      jsonArea,
+      el('div',{style:'margin-top:12px;'},[jsonBtn]),
+      jsonMsg
+    ]);
+
+    const overlay = el('div',{class:'modal-overlay'});
+    overlay.addEventListener('click',(e)=>{ if(e.target===overlay) overlay.remove(); });
+    const saveBtn = el('button',{class:'btn',type:'button',text:'Speichern'});
+
+    const modal = el('div',{class:'modal wide'},[
+      el('h2',{text:'Hosting'}),
+      el('p',{class:'hg-hint',text:'Die Angaben werden direkt aus GitHub gelesen. Alles bleibt änderbar – gespeichert wird erst mit „Speichern“.'
+        + (current.updatedAt ? ' Zuletzt aktualisiert: '+fmtDate(current.updatedAt)+'.' : '')}),
+      el('div',{class:'field'},[
+        el('label',{text:'GitHub-Repo'}),
+        el('div',{class:'hg-detect-row'},[repoInput,detectBtn])
+      ]),
+      status,
+      el('div',{class:'hg-section'},[
+        el('p',{class:'section-label',text:'Vorschau'}),
+        el('div',{class:'field'},[el('label',{text:'Host'}),inputs.host]),
+        el('div',{class:'field'},[el('label',{text:'Live-URL'}),inputs.liveUrl]),
+        el('div',{class:'field'},[el('label',{text:'Repo-URL'}),inputs.repoUrl]),
+        el('div',{class:'field'},[el('label',{text:'Dashboard-URL'}),inputs.dashboardUrl]),
+        el('div',{class:'field'},[el('label',{text:'Deploy-Notiz'}),inputs.deployNote])
+      ]),
+      jsonBox,
+      el('div',{class:'modal-actions'},[
+        el('button',{class:'btn ghost',type:'button',text:'Abbrechen',onclick:()=>overlay.remove()}),
+        saveBtn
+      ])
+    ]);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    repoInput.focus();
+
+    async function save(){
+      const hosting = {};
+      HOSTING_FIELDS.forEach(k=>{ hosting[k] = String(inputs[k].value||'').trim(); });
+      ['liveUrl','repoUrl','dashboardUrl'].forEach(k=>{ hosting[k] = normalizeUrl(hosting[k]); });
+      saveBtn.disabled = true;
+      try{
+        await updateDoc(doc(db,'projects',project.id),{
+          hosting: Object.assign({},hosting,{updatedAt:serverTimestamp()})
+        });
+        // Lokale Kopie nachziehen: die Projektansicht lädt das Dokument einmalig
+        // per getDoc, ein Snapshot-Listener korrigiert hier also nichts.
+        project.hosting = Object.assign({},hosting,{updatedAt:new Date()});
+        overlay.remove();
+        if(typeof onSaved==='function') onSaved();
+      }catch(err){
+        console.error(err);
+        setStatus(describeError(err),'err');
+        saveBtn.disabled = false;
+      }
+    }
+    saveBtn.addEventListener('click',save);
+  }
+
+  // ── Anzeige im Projekt-Header ─────────────────────────────
+  function buildHostingBar(project){
+    const bar = el('div',{class:'host-bar'});
+
+    function hostLink(label,url){
+      const href = normalizeUrl(url);
+      if(!href) return null;
+      return el('a',{class:'pill-btn host-link',href,target:'_blank',rel:'noopener noreferrer',text:label});
+    }
+    function open(){ openHostingModal(project,paint); }
+
+    function paint(){
+      bar.innerHTML='';
+      const h = readHosting(project);
+      if(hostingIsEmpty(h)){
+        bar.appendChild(el('button',{class:'pill-btn host-link',type:'button',text:'Hosting erkennen',onclick:open}));
+        return;
+      }
+      const row = el('div',{class:'host-row'});
+      const badge = hostBadge(h.host);
+      if(badge) row.appendChild(badge);
+      [hostLink('Live',h.liveUrl),hostLink('Repo',h.repoUrl),hostLink('Dashboard',h.dashboardUrl)]
+        .forEach(a=>{ if(a) row.appendChild(a); });
+      row.appendChild(el('button',{class:'host-edit',type:'button',title:'Hosting bearbeiten',
+        'aria-label':'Hosting bearbeiten',text:'✎',onclick:open}));
+      bar.appendChild(row);
+      if(h.deployNote) bar.appendChild(el('p',{class:'host-note',text:h.deployNote}));
+    }
+
+    paint();
+    return bar;
   }
 
   // ══════════════════════════════════════════════════════════
@@ -1689,7 +2186,8 @@
     app.appendChild(el('header',{class:'app-head'},[
       el('p',{class:'eyebrow',text:(project.icon||'📁')+'  Projekt'}),
       el('h1',{text:project.name}),
-      el('p',{class:'sub'},[statusDot,statusText])
+      el('p',{class:'sub'},[statusDot,statusText]),
+      buildHostingBar(project)
     ]));
 
     // Eingabe: Verbesserung + optionale Notiz
