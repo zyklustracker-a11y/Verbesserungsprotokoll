@@ -18,7 +18,13 @@
 <link rel="manifest" href="manifest.json">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<!-- Schriften bewusst NICHT renderblockierend laden: sonst wartet der Browser
+     auf Google, bevor er überhaupt etwas zeichnet – und der Ladescreen käme
+     zu spät. Der Ladescreen selbst benutzt keine Webschrift. Freigegeben wird
+     die App erst, wenn die Schriften da sind (document.fonts.ready), es
+     blitzt also trotzdem kein Schriftwechsel auf. -->
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet"></noscript>
 <style>
   :root{
     --ink-bg:#1b1d21;
@@ -51,6 +57,63 @@
   }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;}
+
+  /* ── Ladescreen ──────────────────────────────────────────────────
+     Markup, Stil und Logo stehen alle inline in dieser Datei, deshalb
+     ist der Schirm schon beim allerersten Paint da – die halbfertige
+     App blitzt nie auf. Farben ausschliesslich aus den Tokens. */
+  #splash{
+    position:fixed;
+    inset:0;
+    z-index:100;                  /* über Modal (50) und Menü-Overlay (60) */
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    /* Safe-Area mitrechnen, falls die Seite je unter den Notch reicht */
+    padding:calc(24px + env(safe-area-inset-top,0px))
+            calc(24px + env(safe-area-inset-right,0px))
+            calc(24px + env(safe-area-inset-bottom,0px))
+            calc(24px + env(safe-area-inset-left,0px));
+    background:radial-gradient(circle at 50% 42%,
+                               var(--ink-bg-raised2) 0%,
+                               var(--ink-bg) 68%);
+    transition:opacity .5s ease;
+    --splash-logo:clamp(96px,24vmin,128px);
+    --splash-gap:30px;
+  }
+  #splash.weg{opacity:0;pointer-events:none;}
+  body.splash-an{overflow:hidden;}
+  /* Das Logo sitzt exakt in der Mitte, der Balken hängt darunter. Deshalb
+     absolut positioniert statt als zentrierte Spalte – sonst wäre die
+     Gruppe mittig und das Logo sässe um die halbe Balkenhöhe zu hoch. */
+  .splash-inner{position:relative;width:100%;height:100%;}
+  #splash-logo{
+    position:absolute;
+    top:50%;
+    left:50%;
+    transform:translate(-50%,-50%);
+    width:var(--splash-logo);
+    height:var(--splash-logo);
+    border-radius:23%;            /* wie ein App-Symbol */
+    display:block;
+  }
+  .splash-bar{
+    position:absolute;
+    left:50%;
+    top:calc(50% + var(--splash-logo) / 2 + var(--splash-gap));
+    transform:translateX(-50%);
+    width:min(210px,54vw);
+    height:4px;
+    border-radius:999px;
+    background:var(--hairline);
+    overflow:hidden;
+  }
+  .splash-bar-fill{
+    width:0;
+    height:100%;
+    border-radius:999px;
+    background:var(--brass);
+  }
   body{
     background:var(--ink-bg);
     color:var(--paper-text);
@@ -1031,6 +1094,111 @@
 </style>
 </head>
 <body>
+<div id="splash" role="status" aria-label="Wird geladen">
+  <div class="splash-inner">
+    <img id="splash-logo" alt="">
+    <div class="splash-bar"><div class="splash-bar-fill" id="splash-fill"></div></div>
+  </div>
+</div>
+<script>
+/* Steuerung des Ladescreens.
+   Bewusst ein klassisches Skript direkt im Body statt im Modul: es läuft
+   sofort beim Parsen, also lange bevor Firebase über das Netz geladen ist.
+   Keine Bibliothek, kein Build-Schritt – passend zum Rest der App. */
+(function(){
+  var splash = document.getElementById('splash');
+  var fill   = document.getElementById('splash-fill');
+  var logo   = document.getElementById('splash-logo');
+  if(!splash || !fill) return;
+
+  // Logo aus dem bereits im Head eingebetteten Icon übernehmen: kein
+  // zweiter Base64-Block in der Datei und keine Netzwerkanfrage, das
+  // Bild steht damit garantiert beim ersten Paint.
+  var quelle = document.querySelector('link[rel="apple-touch-icon"]')
+            || document.querySelector('link[rel="icon"]');
+  if(quelle && logo) logo.src = quelle.href;
+
+  document.body.classList.add('splash-an');
+
+  var MIN_MS    = 2500;    // Mindestdauer, auch wenn sofort alles da ist
+  var FADE_MS   = 500;     // Ausblenden
+  var NOTBREMSE = 12000;   // hakt etwas, wird trotzdem freigegeben
+  var DECKEL    = 0.92;    // vor der Freigabe nie weiter als hierhin
+
+  var start   = Date.now();
+  var gezeigt = 0;
+  var raus    = false;
+
+  // Meilensteine mit Gewicht. Der Balken bildet ab, wie viele davon
+  // erledigt sind; die letzten Prozent laufen erst, wenn alle stehen.
+  var schritte = { fonts:2, firebase:3, auth:2, daten:3 };
+  var erledigt = {};
+  var gesamt = 0;
+  for(var k in schritte) gesamt += schritte[k];
+
+  function anteil(){
+    var s = 0;
+    for(var n in erledigt) s += schritte[n] || 0;
+    return s / gesamt;
+  }
+  function allesDa(){
+    for(var n in schritte) if(!erledigt[n]) return false;
+    return true;
+  }
+  function melde(name){
+    if(schritte[name]) erledigt[name] = true;
+  }
+  function alles(){
+    for(var n in schritte) erledigt[n] = true;
+  }
+
+  function freigeben(){
+    if(raus) return;
+    raus = true;
+    splash.classList.add('weg');
+    document.body.classList.remove('splash-an');
+    setTimeout(function(){ if(splash.parentNode) splash.parentNode.removeChild(splash); },
+               FADE_MS + 80);
+  }
+
+  function schleife(){
+    var t = Math.min(1, (Date.now()-start) / MIN_MS);
+    // Weicher Verlauf, der den Deckel genau nach MIN_MS erreicht.
+    var ausZeit  = (1 - Math.pow(1-t,3)) * DECKEL;
+    var ausLaden = anteil() * DECKEL;
+    // Das Kleinere gewinnt: ist alles sofort da, gibt die Zeit den Takt
+    // vor; lädt etwas langsam, zeigt der Balken den echten Fortschritt.
+    var ziel = Math.min(ausZeit, ausLaden);
+    if(allesDa() && t >= 1) ziel = 1;
+
+    // Nur vorwärts – der Balken springt nie zurück.
+    if(ziel > gezeigt){
+      gezeigt = Math.min(ziel, gezeigt + (ziel-gezeigt)*0.18 + 0.004);
+    }
+    fill.style.width = (gezeigt*100).toFixed(2) + '%';
+
+    if(gezeigt >= 0.999){ freigeben(); return; }
+    requestAnimationFrame(schleife);
+  }
+  requestAnimationFrame(schleife);
+
+  // Schriften: der Ladescreen kommt ohne Webschrift aus, die App nicht.
+  // Erst freigeben, wenn sie da sind – sonst wechselt hinterher sichtbar
+  // die Schrift und das Layout verrutscht.
+  if(document.fonts && document.fonts.ready){
+    document.fonts.ready.then(function(){ melde('fonts'); },
+                              function(){ melde('fonts'); });
+  } else {
+    melde('fonts');
+  }
+
+  // Notbremse: ein zu früh freigegebener Ladescreen ist deutlich besser
+  // als einer, der ewig stehen bleibt.
+  setTimeout(alles, NOTBREMSE);
+
+  window.__splash = { melde: melde, alles: alles };
+})();
+</script>
 <nav id="mainnav"></nav>
 <div id="userbar"></div>
 <div id="ioshint"></div>
@@ -1103,9 +1271,20 @@
     return 'Verbindungsfehler'+(code?(' ('+code+')'):'')+' – Konfiguration prüfen.';
   }
 
+  // ── Ladescreen ─────────────────────────────────────────────
+  // Meldet einen Meilenstein an das Steuerskript im Body. Fehlt es (etwa
+  // weil jemand nur diesen Modulteil testet), passiert schlicht nichts.
+  function splashMelde(name){
+    try{ if(window.__splash) window.__splash.melde(name); }catch(e){}
+  }
+  function splashAlles(){
+    try{ if(window.__splash) window.__splash.alles(); }catch(e){}
+  }
+
   // ── Konfiguration prüfen ───────────────────────────────────
   const isConfigured = firebaseConfig.apiKey && firebaseConfig.apiKey !== "DEIN_API_KEY";
   if(!isConfigured){
+    splashAlles();     // sonst bliebe der Ladescreen über der Fehlermeldung stehen
     app.appendChild(el('header',{class:'app-head'},[
       el('p',{class:'eyebrow',text:'Geteiltes Protokoll'}),
       el('h1',{text:'Verbesserungsprotokoll'}),
@@ -1124,6 +1303,7 @@
   // wieder an. So erscheint bei jeder Anmeldung die Kontoauswahl, und ein Wechsel
   // auf ein anderes Google-Konto ist ueberhaupt erst moeglich.
   googleProvider.setCustomParameters({ prompt:'select_account' });
+  splashMelde('firebase');   // Modul geladen, Firebase steht
 
   const projectsRef = collection(db,'projects');
   const ideasRef    = collection(db,'appIdeas');
@@ -1342,10 +1522,12 @@
       githubHomeRepaint();
       statusDot.classList.remove('offline');
       statusText.textContent='Verbunden · Live-Synchronisierung aktiv';
+      splashMelde('daten');   // Karten stehen – nichts ploppt mehr nach
     },(err)=>{
       console.error(err);
       statusDot.classList.add('offline');
       statusText.textContent=describeError(err);
+      splashMelde('daten');
     }));
   }
 
@@ -4228,10 +4410,12 @@
 
       statusDot.classList.remove('offline');
       statusText.textContent='Verbunden · Live-Synchronisierung aktiv';
+      splashMelde('daten');   // Einträge stehen – nichts ploppt mehr nach
     },(err)=>{
       console.error(err);
       statusDot.classList.add('offline');
       statusText.textContent=describeError(err);
+      splashMelde('daten');
     }));
   }
 
@@ -4392,6 +4576,7 @@
       }
     });
 
+    splashMelde('daten');   // der Anmeldeschirm lädt nichts nach
     app.appendChild(el('div',{class:'login-screen'},[
       el('div',{class:'login-card'},[
         el('p',{class:'eyebrow',text:'Verbesserungsprotokoll'}),
@@ -4421,6 +4606,11 @@
 
   onAuthStateChanged(auth,(user)=>{
     signedIn = !!user;
+    splashMelde('auth');
+    // Sicherheitsnetz für den Meilenstein „daten“: Ansichten wie die
+    // code-geschützten App-Ideen warten auf eine Eingabe und melden von
+    // sich aus nie etwas. Der Ladescreen darf davon nicht abhängen.
+    setTimeout(()=>splashMelde('daten'), 3000);
     if(user){
       renderUserbar(user);
       router();

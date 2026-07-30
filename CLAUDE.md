@@ -100,6 +100,24 @@ Sprache der UI und aller Texte/Kommentare: **Deutsch**.
   gespeichert – eine eingeschaltete Erinnerung ohne Zustellweg wäre eine
   stille Lüge.
 
+## Ladescreen (`#splash` in index.html)
+
+- Markup, Stil und Logo stehen inline, damit der Schirm schon beim ersten
+  Paint steht. Das Logo kommt per JS aus dem `apple-touch-icon` im Head –
+  kein zweiter Base64-Block, keine Netzwerkanfrage.
+- Die Schriften sind deshalb bewusst **nicht** renderblockierend geladen
+  (`media="print"` + `onload`). Nicht zurückdrehen, sonst erscheint der
+  Ladescreen erst, wenn Google geantwortet hat.
+- Gesteuert wird er von einem klassischen `<script>` im Body, nicht aus
+  dem Modul: es muss laufen, bevor Firebase über das Netz kommt.
+- Freigegeben wird erst, wenn die Meilensteine `fonts`, `firebase`, `auth`
+  und `daten` gemeldet sind UND 2,5 s vergangen sind. Neue Meilensteine
+  über `splashMelde(name)`; `splashAlles()` gibt sofort alles frei.
+- Zwei Sicherungen, die bleiben müssen: die Notbremse nach 12 s im
+  Steuerskript und der 3-s-Ersatz für `daten` nach dem Auth-Wechsel.
+  Sonst bliebe der Schirm z. B. über der Code-Abfrage der App-Ideen
+  hängen. Ein zu früh freigegebener Ladescreen ist besser als ein ewiger.
+
 ## Code-Konventionen
 
 - DOM-Erzeugung IMMER über den `el(tag, props, children)`-Helper,
