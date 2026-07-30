@@ -429,6 +429,72 @@
   button.btn.sp-copy.copied,button.btn.sp-copy.copied:hover{background:var(--sage);color:#1b1d21;}
   button.btn.sp-copy.failed,button.btn.sp-copy.failed:hover{background:var(--danger);color:#f4efe9;}
 
+  /* Gespeicherte Dateien */
+  input[type=file].file-input{
+    width:100%;
+    background:var(--ink-bg-raised);
+    border:1px solid var(--hairline);
+    border-radius:3px;
+    color:var(--paper-text-dim);
+    font-family:'Inter',sans-serif;
+    font-size:14px;
+    padding:11px 13px;
+  }
+  input[type=file].file-input::file-selector-button{
+    background:var(--ink-bg-raised2);
+    color:var(--paper-text);
+    border:1px solid var(--hairline);
+    border-radius:3px;
+    font-family:'Inter',sans-serif;
+    font-size:13px;
+    padding:8px 14px;
+    margin-right:12px;
+    cursor:pointer;
+  }
+  .sf-item{
+    background:var(--ink-bg-raised);
+    border:1px solid var(--hairline);
+    border-radius:5px;
+    padding:16px 18px;
+    margin-bottom:12px;
+  }
+  .sf-title{
+    font-family:'Fraunces',serif;
+    font-weight:500;
+    font-size:17.5px;
+    line-height:1.35;
+    margin:0 0 8px;
+    word-break:break-word;
+  }
+  .sf-desc{
+    font-size:14px;
+    line-height:1.55;
+    color:var(--paper-text-dim);
+    white-space:pre-wrap;
+    word-break:break-word;
+    margin:0;
+  }
+  .sf-box{margin-top:12px;padding-top:12px;border-top:1px solid var(--hairline);}
+  .sf-file{
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    padding:10px 0;border-bottom:1px solid var(--hairline);
+  }
+  .sf-file:last-child{border-bottom:none;}
+  .sf-thumb{
+    width:64px;height:64px;flex-shrink:0;
+    object-fit:cover;
+    border:1px solid var(--hairline);
+    border-radius:4px;
+    background:var(--ink-bg);
+  }
+  .sf-file-name{flex:1;min-width:130px;font-size:14px;line-height:1.4;word-break:break-word;}
+  .sf-file-size{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;color:var(--paper-text-dim);margin-top:4px;
+  }
+  .sf-file-actions{display:flex;gap:6px;align-items:center;flex-shrink:0;}
+  .sf-add{margin-top:16px;padding-top:14px;border-top:1px solid var(--hairline);}
+
   /* To-dos */
   .todo-item{
     background:var(--ink-bg-raised);
@@ -802,6 +868,8 @@
     .sp-actions{justify-content:space-between;}
     button.btn.sp-copy{flex:1;height:44px;}
     /* Hosting: Links und Bearbeiten-Icon sicher treffbar halten */
+    .sf-thumb{width:52px;height:52px;}
+    .sf-file-actions{flex:1;justify-content:flex-end;}
     a.host-link,button.host-link{min-height:42px;padding:0 16px;font-size:13px;}
     .host-edit{font-size:17px;padding:11px 13px;}
     /* Repo-Feld bekommt die volle Breite, der Button liegt darunter */
@@ -907,6 +975,7 @@
   const ideasRef    = collection(db,'appIdeas');
   const todosRef    = collection(db,'todos');
   const promptsRef  = collection(db,'savedPrompts');
+  const savedFilesRef = collection(db,'savedFiles');
 
   function entriesRefFor(project){
     return project.legacyCollection
@@ -943,6 +1012,7 @@
   let ideasCache = [];
   let todosCache = [];         // To-dos, nach order sortiert
   let promptsCache = [];       // gespeicherte Prompts, nach order sortiert
+  let savedFilesCache = [];    // gespeicherte Dateien, nach order sortiert
   let promptsOpen = false;     // Bereich „Getestete Prompts" startet eingeklappt
   let signedIn = false;        // wird vom Auth-Gate am Dateiende gesetzt
   let ideasUnlocked = false;   // App-Ideen erst nach Code-Eingabe sichtbar (nur diese Sitzung)
@@ -1080,6 +1150,15 @@
     }
 
     if(promptsOpen){ showPrompts(); } else { showPromptsClosed(); }
+
+    // Gespeicherte Dateien
+    const filesWrap = el('div');
+    app.appendChild(el('div',{style:'border-top:1px solid var(--hairline);padding-top:34px;margin-top:8px;'},[
+      el('p',{class:'section-label',text:'📎 Gespeicherte Dateien'}),
+      buildFilesForm(),
+      filesWrap
+    ]));
+    subscribeSavedFiles(filesWrap);
 
     app.appendChild(el('footer',{text:'Alle Änderungen werden automatisch über die Datenbank synchronisiert und dauerhaft gespeichert.'}));
 
@@ -2673,6 +2752,466 @@
 
     item.appendChild(row);
     item.appendChild(foot);
+    return item;
+  }
+
+  // ══════════════════════════════════════════════════════════
+  //  GESPEICHERTE DATEIEN
+  //
+  //  Sammlungen aus Titel, Beschreibung und angehängten Dateien
+  //  (Textdateien, Bilder, Konzepte).
+  //
+  //  Datenmodell:
+  //    savedFiles/{docId}                → { title, description, order,
+  //                                          createdAt, updatedAt }
+  //    savedFiles/{docId}/files/{fileId} → { name, mime, size, data, createdAt }
+  //
+  //  „data“ ist der reine Base64-Inhalt (ohne data:-Präfix), „size“ die
+  //  Rohgrösse in Bytes. Die Anhänge liegen bewusst in einer Subcollection:
+  //  so gilt das 1-MB-Limit von Firestore je Datei statt für den ganzen
+  //  Eintrag, und die Liste lädt schnell, weil die Dateien erst beim
+  //  Aufklappen eines Eintrags nachgeladen werden.
+  // ══════════════════════════════════════════════════════════
+
+  const MAX_FILE_BYTES = 500*1024;   // harte Grenze je Datei (Rohgrösse)
+  const MAX_IMAGE_EDGE = 1600;       // längste Kante nach dem Herunterrechnen
+  const IMAGE_QUALITY  = 0.8;        // JPEG-Qualität beim Export
+
+  function filesSubRef(docId){ return collection(db,'savedFiles',docId,'files'); }
+
+  function fmtBytes(n){
+    const b = Number(n)||0;
+    if(b < 1024) return b+' B';
+    if(b < 1024*1024) return (b/1024).toFixed(b<10240?1:0)+' KB';
+    return (b/(1024*1024)).toFixed(1)+' MB';
+  }
+
+  // Rohgrösse aus der Base64-Länge – Base64 bläht die Daten um rund ein
+  // Drittel auf, gespeichert wird aber der Base64-String.
+  function base64Bytes(b64){
+    const s = String(b64||'');
+    if(!s) return 0;
+    const pad = s.endsWith('==') ? 2 : (s.endsWith('=') ? 1 : 0);
+    return Math.floor(s.length*3/4) - pad;
+  }
+  // „data:<mime>;base64,<nutzdaten>“ → nur die Nutzdaten
+  function stripDataUrl(url){
+    const s = String(url||'');
+    const i = s.indexOf(',');
+    return i<0 ? '' : s.slice(i+1);
+  }
+  // Der MIME-Typ landet in einer data:-URL bzw. in einem Blob – deshalb nur
+  // unauffällige Werte durchlassen und sonst auf den Standard zurückfallen.
+  function safeMime(mime,fallback){
+    const s = String(mime||'').trim().toLowerCase();
+    return /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(s) ? s : fallback;
+  }
+
+  function readAsDataUrl(file){
+    return new Promise((resolve,reject)=>{
+      const r = new FileReader();
+      r.onload  = ()=>resolve(String(r.result||''));
+      r.onerror = ()=>reject(new Error('„'+(file.name||'Datei')+'“ konnte nicht gelesen werden.'));
+      r.readAsDataURL(file);
+    });
+  }
+
+  // Bilder auf MAX_IMAGE_EDGE herunterrechnen und als JPEG exportieren.
+  // Der weisse Grund verhindert, dass transparente Flächen im JPEG schwarz
+  // werden. Klappt das Umrechnen nicht, wird das Original weiterverwendet.
+  function downscaleImage(file){
+    return new Promise((resolve)=>{
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      function done(value){ URL.revokeObjectURL(url); resolve(value); }
+      img.onload = ()=>{
+        try{
+          const edge  = Math.max(img.naturalWidth, img.naturalHeight) || 1;
+          const scale = Math.min(1, MAX_IMAGE_EDGE/edge);
+          const w = Math.max(1, Math.round(img.naturalWidth  * scale));
+          const h = Math.max(1, Math.round(img.naturalHeight * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = 'white';
+          ctx.fillRect(0,0,w,h);
+          ctx.drawImage(img,0,0,w,h);
+          const dataUrl = canvas.toDataURL('image/jpeg',IMAGE_QUALITY);
+          done(dataUrl.indexOf('data:image/jpeg')===0 ? dataUrl : null);
+        }catch(err){ console.error(err); done(null); }
+      };
+      img.onerror = ()=>done(null);
+      img.src = url;
+    });
+  }
+
+  // Liefert das fertige Dokument für die files-Subcollection – oder wirft
+  // einen Fehler mit klarer Begründung samt tatsächlicher Grösse.
+  // Nichts wird stillschweigend abgeschnitten.
+  async function prepareFile(file){
+    const isImage = String(file.type||'').toLowerCase().indexOf('image/')===0;
+    let name = file.name || 'Datei';
+    let mime = safeMime(file.type,'application/octet-stream');
+    let b64  = '';
+
+    // Grosse Nicht-Bilder gar nicht erst einlesen – die Rohgrösse steht fest.
+    if(!isImage && file.size > MAX_FILE_BYTES){
+      throw new Error('„'+name+'“ ist mit '+fmtBytes(file.size)+' zu gross. '+
+        'Pro Datei sind höchstens '+fmtBytes(MAX_FILE_BYTES)+' möglich.');
+    }
+
+    if(isImage){
+      const dataUrl = await downscaleImage(file);
+      if(dataUrl){
+        b64  = stripDataUrl(dataUrl);
+        mime = 'image/jpeg';
+        // Endung mitziehen, damit die heruntergeladene Datei zum Inhalt passt
+        name = name.replace(/\.[^.\s]+$/,'') + '.jpg';
+      }
+    }
+    if(!b64) b64 = stripDataUrl(await readAsDataUrl(file));
+    if(!b64) throw new Error('„'+(file.name||'Datei')+'“ ist leer oder konnte nicht gelesen werden.');
+
+    const size = base64Bytes(b64);
+    if(size > MAX_FILE_BYTES){
+      throw new Error('„'+(file.name||'Datei')+'“ ist mit '+fmtBytes(size)+' zu gross'+
+        (isImage ? ' – auch heruntergerechnet auf '+MAX_IMAGE_EDGE+' px. ' : '. ')+
+        'Pro Datei sind höchstens '+fmtBytes(MAX_FILE_BYTES)+' möglich.');
+    }
+    return {name, mime, size, data:b64, createdAt:serverTimestamp()};
+  }
+
+  // Legt die ausgewählten Dateien in der files-Subcollection ab und meldet
+  // jede abgelehnte Datei einzeln zurück.
+  async function storeFiles(docId,list){
+    const errors = [], saved = [];
+    for(const file of list){
+      try{
+        const payload = await prepareFile(file);
+        await addDoc(filesSubRef(docId),payload);
+        saved.push(payload.name);
+      }catch(err){
+        console.error(err);
+        errors.push(err && err.code
+          ? ('„'+(file.name||'Datei')+'“: '+describeError(err))
+          : ((err && err.message) || ('„'+(file.name||'Datei')+'“ konnte nicht gespeichert werden.')));
+      }
+    }
+    const parts = [];
+    if(saved.length)  parts.push(saved.length===1 ? '1 Datei gespeichert.' : saved.length+' Dateien gespeichert.');
+    if(errors.length) parts.push(errors.join(' '));
+    if(!parts.length) parts.push('Es wurde nichts ausgewählt.');
+    return {saved, errors, message:parts.join(' ')};
+  }
+
+  // Base64 → Blob → Objekt-URL → Anker mit download-Attribut.
+  // Die Objekt-URL wird danach wieder freigegeben, sonst bleibt sie im Speicher.
+  function downloadFile(f){
+    let url = '';
+    try{
+      const bin = atob(String(f.data||''));
+      const bytes = new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+      const blob = new Blob([bytes],{type:safeMime(f.mime,'application/octet-stream')});
+      url = URL.createObjectURL(blob);
+      const a = el('a',{href:url,download:f.name||'datei'});
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }catch(err){
+      console.error(err);
+      alert('Die Datei konnte nicht zum Herunterladen vorbereitet werden.');
+    }
+    if(url) setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+
+  // ── Formular: neuer Eintrag ───────────────────────────────
+  function buildFilesForm(){
+    const titleInput = el('input',{type:'text',maxlength:'160',
+      placeholder:'Kurz: worum geht es?'});
+    const descTa = el('textarea',{rows:'3',maxlength:'4000',
+      placeholder:'Beschreibung, Kontext, Konzept … (optional)'});
+    const fileInput = el('input',{class:'file-input',type:'file',multiple:'multiple'});
+    const btn = el('button',{class:'btn',text:'Eintrag speichern'});
+    const status = el('p',{class:'hg-status',style:'display:none;'});
+
+    const form = el('form',{class:'sp-form'},[
+      el('div',{class:'field'},[el('label',{text:'Titel'}),titleInput]),
+      el('div',{class:'field'},[el('label',{text:'Beschreibung'}),descTa]),
+      el('div',{class:'field'},[
+        el('label',{text:'Dateien (optional, mehrere möglich)'}),
+        fileInput,
+        el('p',{class:'hg-sub',text:'Bilder werden auf '+MAX_IMAGE_EDGE+' px längste Kante '+
+          'heruntergerechnet und als JPEG gespeichert. Danach gilt für jede Datei eine '+
+          'Grenze von '+fmtBytes(MAX_FILE_BYTES)+'.'})
+      ]),
+      el('div',{class:'sp-form-actions'},[btn]),
+      status
+    ]);
+
+    form.addEventListener('submit',async(e)=>{
+      e.preventDefault();
+      const title = titleInput.value.trim();
+      const list  = Array.from(fileInput.files||[]);
+      if(!title && list.length===0){ titleInput.focus(); return; }
+      btn.disabled=true;
+      status.style.display=''; status.className='hg-status';
+      status.textContent = list.length ? 'Dateien werden verarbeitet …' : 'Wird gespeichert …';
+      try{
+        // Neue Einträge oben einsortieren (kleinster order-Wert = oben).
+        const minOrder = savedFilesCache.reduce((m,d)=>Math.min(m, d.order??0), 0);
+        const ref = await addDoc(savedFilesRef,{
+          title,
+          description:descTa.value.trim(),
+          order:minOrder-1,
+          createdAt:serverTimestamp()
+        });
+        const res = list.length ? await storeFiles(ref.id,list) : {errors:[],message:'Gespeichert.'};
+        titleInput.value=''; descTa.value=''; fileInput.value='';
+        status.className = 'hg-status'+(res.errors.length?' err':' ok');
+        status.textContent = res.errors.length ? res.message : 'Gespeichert.';
+      }catch(err){
+        console.error(err);
+        status.className='hg-status err';
+        status.textContent = describeError(err);
+      }
+      btn.disabled=false; titleInput.focus();
+    });
+    return form;
+  }
+
+  // ── Dateien nachträglich anhängen ─────────────────────────
+  function buildFileAdder(docId){
+    const input  = el('input',{class:'file-input',type:'file',multiple:'multiple'});
+    const btn    = el('button',{class:'btn small',type:'button',text:'Dateien hinzufügen'});
+    const status = el('p',{class:'hg-status',style:'display:none;'});
+
+    btn.addEventListener('click',async()=>{
+      const list = Array.from(input.files||[]);
+      if(list.length===0){ input.click(); return; }
+      btn.disabled=true;
+      status.style.display=''; status.className='hg-status';
+      status.textContent='Dateien werden verarbeitet …';
+      const res = await storeFiles(docId,list);
+      input.value='';
+      status.className='hg-status'+(res.errors.length?' err':' ok');
+      status.textContent=res.message;
+      btn.disabled=false;
+    });
+
+    return el('div',{class:'sf-add'},[
+      el('div',{class:'field',style:'margin-bottom:12px;'},[
+        el('label',{text:'Weitere Dateien anhängen'}),
+        input
+      ]),
+      btn,
+      status
+    ]);
+  }
+
+  // ── Eine angehängte Datei als Zeile ───────────────────────
+  function buildFileRow(docId,fileId,f){
+    const row = el('div',{class:'sf-file'});
+    const mime = safeMime(f.mime,'application/octet-stream');
+
+    // Bilder als kleine Vorschau, alles andere nur als Zeile
+    if(mime.indexOf('image/')===0 && f.data){
+      row.appendChild(el('img',{class:'sf-thumb',alt:f.name||'Bild',
+        src:'data:'+mime+';base64,'+String(f.data)}));
+    }
+    row.appendChild(el('div',{class:'sf-file-name'},[
+      el('div',{text:f.name||'Ohne Namen'}),
+      el('div',{class:'sf-file-size',text:fmtBytes(f.size)})
+    ]));
+
+    const actions = el('div',{class:'sf-file-actions'});
+    actions.appendChild(el('button',{class:'pill-btn',type:'button',
+      text:'Herunterladen',onclick:()=>downloadFile(f)}));
+    actions.appendChild(el('button',{class:'row-btn del',type:'button',title:'Datei löschen',
+      text:'✕',style:'opacity:.85;',onclick:async()=>{
+        if(!confirm('Die Datei „'+(f.name||'Ohne Namen')+'“ löschen?')) return;
+        try{ await deleteDoc(doc(db,'savedFiles',docId,'files',fileId)); }
+        catch(err){ console.error(err); alert('Konnte nicht gelöscht werden. '+describeError(err)); }
+      }}));
+    row.appendChild(actions);
+    return row;
+  }
+
+  // ── Echtzeit-Anbindung ────────────────────────────────────
+  function subscribeSavedFiles(container){
+    // Nach createdAt (neu→alt) abfragen – das ist auch die Reihenfolge,
+    // anhand derer fehlende order-Werte einmalig initialisiert würden.
+    const q = query(savedFilesRef, orderBy('createdAt','desc'));
+    track(onSnapshot(q,(snap)=>{
+      let docs = snap.docs.map(d=>({id:d.id, ...d.data()}));
+
+      if(docs.some(d=> typeof d.order !== 'number')){
+        const batch = writeBatch(db);
+        docs.forEach((d,i)=>{
+          if(typeof d.order !== 'number'){
+            d.order = i;
+            batch.update(doc(db,'savedFiles',d.id),{order:i});
+          }
+        });
+        batch.commit().catch(err=>console.error(err));
+      }
+
+      docs.sort((a,b)=> (a.order??0) - (b.order??0));
+      savedFilesCache = docs;
+
+      container.innerHTML='';
+      if(docs.length===0){
+        container.appendChild(el('p',{class:'empty',
+          text:'Noch nichts gespeichert – leg oben deinen ersten Eintrag an.'}));
+        return;
+      }
+      docs.forEach((d,i)=> container.appendChild(buildSavedFileItem(d.id,d,i,docs.length)));
+    },(err)=>console.error(err)));
+  }
+
+  async function moveSavedFile(index,dir){
+    const target = index+dir;
+    if(target<0 || target>=savedFilesCache.length) return;
+    const a = savedFilesCache[index], b = savedFilesCache[target];
+    const oa = (a.order ?? index), ob = (b.order ?? target);
+    try{
+      const batch = writeBatch(db);
+      batch.update(doc(db,'savedFiles',a.id),{order:ob});
+      batch.update(doc(db,'savedFiles',b.id),{order:oa});
+      await batch.commit();
+    }catch(err){ console.error(err); alert('Reihenfolge konnte nicht geändert werden.'); }
+  }
+
+  // Firestore räumt Subcollections NICHT automatisch ab – die Dokumente der
+  // files-Subcollection müssen deshalb ausdrücklich mit gelöscht werden.
+  async function deleteSavedFile(id,title){
+    if(!confirm('Den Eintrag „'+((title||'').trim()||'Ohne Titel')+
+                '“ mit allen angehängten Dateien löschen?')) return;
+    try{
+      const snap = await getDocs(filesSubRef(id));
+      const list = snap.docs;
+      for(let i=0;i<list.length;i+=400){        // ein writeBatch fasst max. 500 Schreibvorgänge
+        const batch = writeBatch(db);
+        list.slice(i,i+400).forEach(d=>batch.delete(d.ref));
+        await batch.commit();
+      }
+      await deleteDoc(doc(db,'savedFiles',id));
+    }catch(err){ console.error(err); alert('Konnte nicht gelöscht werden. '+describeError(err)); }
+  }
+
+  function buildSavedFileItem(id,data,index,total){
+    const item = el('div',{class:'sf-item'});
+    const titleDiv = el('div',{class:'sf-title',text:(data.title||'').trim() || 'Ohne Titel'});
+    const descDiv  = (data.description||'').trim()
+      ? el('div',{class:'sf-desc',text:data.description}) : null;
+
+    // Anhänge werden erst beim Aufklappen geladen – das hält die Liste schnell.
+    const box    = el('div',{class:'sf-box',style:'display:none;'});
+    const toggle = el('button',{class:'sp-toggle',type:'button',text:'▸ Dateien anzeigen'});
+    let filesUnsub = null;
+    let boxOpen = false;
+
+    function closeBox(){
+      boxOpen = false;
+      if(filesUnsub){ filesUnsub(); filesUnsub=null; }
+      box.innerHTML='';
+      box.style.display='none';
+      toggle.textContent='▸ Dateien anzeigen';
+    }
+    function openBox(){
+      boxOpen = true;
+      box.innerHTML='';
+      box.style.display='';
+      toggle.textContent='▾ Dateien ausblenden';
+
+      const listWrap = el('div');
+      box.appendChild(listWrap);
+      box.appendChild(buildFileAdder(id));
+      listWrap.appendChild(el('p',{class:'hg-sub',style:'margin:0;',text:'Dateien werden geladen …'}));
+
+      const q = query(filesSubRef(id), orderBy('createdAt','asc'));
+      filesUnsub = onSnapshot(q,(snap)=>{
+        listWrap.innerHTML='';
+        if(snap.empty){
+          listWrap.appendChild(el('p',{class:'empty',style:'padding:8px 0;',
+            text:'Noch keine Dateien angehängt.'}));
+          return;
+        }
+        snap.docs.forEach(d=> listWrap.appendChild(buildFileRow(id,d.id,d.data())));
+      },(err)=>{
+        console.error(err);
+        listWrap.innerHTML='';
+        listWrap.appendChild(el('p',{class:'hg-status err',text:describeError(err)}));
+      });
+      // Zusätzlich beim Routenwechsel abmelden – der Wrapper darf doppelt laufen.
+      track(()=>{ if(filesUnsub){ filesUnsub(); filesUnsub=null; } });
+    }
+    toggle.addEventListener('click',()=>{ if(boxOpen) closeBox(); else openBox(); });
+
+    const foot = el('div',{class:'sp-foot'});
+    foot.appendChild(el('div',{class:'meta',
+      text:(data.updatedAt?'bearb. ':'')+fmtDate(data.updatedAt||data.createdAt)}));
+    const actions = el('div',{class:'sp-actions'});
+
+    const move = el('div',{class:'idea-move'});
+    const upBtn   = el('button',{class:'ctrl-btn',title:'Nach oben',text:'▲',onclick:()=>moveSavedFile(index,-1)});
+    const downBtn = el('button',{class:'ctrl-btn',title:'Nach unten',text:'▼',onclick:()=>moveSavedFile(index,1)});
+    upBtn.disabled   = (index===0);
+    downBtn.disabled = (index===total-1);
+    move.appendChild(upBtn); move.appendChild(downBtn);
+    actions.appendChild(move);
+
+    const editBtn = el('button',{class:'row-btn',title:'Bearbeiten',text:'✎',style:'opacity:.85;'});
+    const delBtn  = el('button',{class:'row-btn del',title:'Löschen',text:'✕',style:'opacity:.85;'});
+    actions.appendChild(editBtn); actions.appendChild(delBtn);
+    foot.appendChild(actions);
+
+    delBtn.addEventListener('click',()=>{ deleteSavedFile(id,data.title); });
+
+    editBtn.addEventListener('click',()=>{
+      closeBox();                       // Listener der Anhänge nicht verwaisen lassen
+      const titleInput = el('input',{type:'text',maxlength:'160',placeholder:'Titel'});
+      titleInput.value = data.title || '';
+      const descTa = el('textarea',{rows:'4',maxlength:'4000',placeholder:'Beschreibung'});
+      descTa.value = data.description || '';
+      const save   = el('button',{class:'btn small',text:'Speichern'});
+      const cancel = el('button',{class:'btn small ghost',text:'Abbrechen'});
+      const editBox = el('div',{},[
+        el('div',{class:'field'},[el('label',{text:'Titel'}),titleInput]),
+        el('div',{class:'field'},[el('label',{text:'Beschreibung'}),descTa]),
+        el('div',{class:'edit-actions'},[save,cancel])
+      ]);
+      restore(editBox);
+      titleInput.focus();
+
+      cancel.addEventListener('click',()=>{ restore(null); });
+      save.addEventListener('click',async()=>{
+        save.disabled=true;
+        try{
+          await updateDoc(doc(db,'savedFiles',id),{
+            title:titleInput.value.trim(),
+            description:descTa.value.trim(),
+            updatedAt:serverTimestamp()
+          });
+        }catch(err){
+          console.error(err); alert('Konnte nicht gespeichert werden. '+describeError(err));
+          save.disabled=false;
+        }
+      });
+    });
+
+    // Inhalt austauschen (Bearbeiten) bzw. Ansicht wiederherstellen
+    function restore(editBox){
+      item.innerHTML='';
+      if(editBox){ item.appendChild(editBox); return; }
+      item.appendChild(titleDiv);
+      if(descDiv) item.appendChild(descDiv);
+      item.appendChild(toggle);
+      item.appendChild(box);
+      item.appendChild(foot);
+    }
+
+    restore(null);
     return item;
   }
 
