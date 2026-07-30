@@ -112,9 +112,10 @@ Sprache der UI und aller Texte/Kommentare: **Deutsch**.
   Wenn er fehlschlägt: Fehler fixen, bevor weitergearbeitet wird.
 - Deployment: **GitHub Pages, gebaut aus `main`** (kein Build-Schritt). Ein
   Merge nach `main` löst den Workflow „pages build and deployment" aus, nach
-  ca. einer Minute ist die Seite live. Achtung: der Default-Branch des Repos
-  steht auf einem alten `claude/*`-Branch – Pages baut trotzdem aus `main`.
-  PRs deshalb immer gegen `main` öffnen.
+  ca. einer Minute ist die Seite live. PRs immer gegen `main` öffnen.
+  `main` ist auch der Default-Branch – das muss so bleiben, denn GitHub
+  startet geplante Workflows ausschliesslich vom Default-Branch. Stünde er
+  woanders, liefe die To-do-Erinnerung nie.
 - firestore.rules werden separat in der Firebase Console eingespielt – bei
   Rules-Änderungen den Nutzer explizit daran erinnern!
 
