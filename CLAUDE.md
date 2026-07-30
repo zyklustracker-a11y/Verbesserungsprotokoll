@@ -9,6 +9,11 @@ Sprache der UI und aller Texte/Kommentare: **Deutsch**.
 - **Single-File-App**: Die gesamte App lebt in `index.html` (HTML + CSS + JS).
   KEIN Build-Schritt, KEIN Framework, KEINE npm-Abhängigkeiten.
   Niemals React/Vue/Bundler vorschlagen oder die App in Module aufteilen.
+  Einzige Ausnahme: `firebase-messaging-sw.js`. Ein Service Worker MUSS
+  laut Browser-Vorgabe eine eigene Datei sein – das ist keine Einladung,
+  weiteren App-Code auszulagern. Die Firebase-Konfiguration steht dort ein
+  zweites Mal, weil ein Worker nichts aus `index.html` lesen kann: wird sie
+  hier geändert, dort mitändern.
 - `backup.html` ist ein separater, schlanker Backup-Viewer. Bei Design-Änderungen
   prüfen, ob die CSS-Variablen dort synchron bleiben.
 - `firestore.rules` = Security-Regeln. Bei jeder neuen Collection MUSS hier
@@ -19,7 +24,8 @@ Sprache der UI und aller Texte/Kommentare: **Deutsch**.
 
 - Vanilla JS als ES-Module, Firebase v10.13.0 per CDN-Import (gstatic.com)
 - Firestore-Collections: `projects` (+ Subcollection `entries`), `appIdeas`,
-  `savedPrompts`, `todos`, `settings`, Legacy: `verbesserungsprotokoll`
+  `savedPrompts`, `todos`, `savedFiles` (+ `files` + `parts`), `pushTokens`,
+  `settings`, Legacy: `verbesserungsprotokoll`
 - Auth: Firebase Auth, Zugriff nur für eine Owner-UID (siehe firestore.rules).
   Der apiKey im Code ist öffentlich und KEIN Geheimnis – Sicherheit kommt
   ausschliesslich aus den Rules. Nicht "verstecken" wollen.
@@ -48,6 +54,42 @@ Sprache der UI und aller Texte/Kommentare: **Deutsch**.
 - Der Token gehört NICHT in eine der von `backup.html` gesicherten
   Collections (`projects`, `appIdeas`, `todos`, `verbesserungsprotokoll`),
   sonst landet er in heruntergeladenen Backup-Dateien. Deshalb `settings`.
+
+## Gespeicherte Dateien (Abschnitt „GESPEICHERTE DATEIEN")
+
+- `savedFiles/{id}` hält Titel/Beschreibung, die Anhänge liegen in
+  `files`, deren Inhalt als Base64 im Feld `data`. Ein Firestore-Dokument
+  fasst nur 1 MiB, deshalb wandern Dateien über `CHUNK_CHARS` (700.000
+  Base64-Zeichen) in Teilstücke der Subcollection `parts`; `chunks` am
+  Datei-Dokument hält deren Anzahl. **Immer an einer durch 4 teilbaren
+  Stelle trennen**, sonst lassen sich die Base64-Teile nicht mehr
+  zusammensetzen.
+- Dateien ohne `chunks`/`thumb`/`path` sind Altbestand und müssen
+  weiterlaufen – gelesen wird überall defensiv, keine Migration.
+- Löschen geht immer über `deleteFileDoc()` bzw. `deleteSavedFile()`:
+  Firestore räumt Subcollections nicht selbst ab.
+- Jedes Bild bekommt ein kleines `thumb`. Ohne das hätten aufgeteilte
+  Bilder keine Vorschau, weil ihr `data`-Feld leer ist.
+- Ordner: `webkitdirectory` und Drag & Drop gibt es nur am Rechner
+  (`canPickFolders`). iOS Safari kann beides nicht – dort die Bedienelemente
+  ausblenden statt tote Schalter zu zeigen.
+
+## Benachrichtigungen (Abschnitt „EINSTELLUNGEN")
+
+- Eine Webseite kann sich selbst keine Benachrichtigung auf eine Uhrzeit
+  legen. Der Versand kommt von `.github/workflows/todo-erinnerung.yml`:
+  läuft alle 15 Minuten, `send-reminder.mjs` entscheidet anhand von
+  `settings/notifications`, ob gerade zu senden ist (Zeitfenster von zwei
+  Stunden ab der Wunschuhrzeit, `lastSentDate` verhindert Doppelversand).
+- Das Skript kommt bewusst ohne npm-Pakete aus und braucht das Repo-Secret
+  `FIREBASE_SERVICE_ACCOUNT`. Fehlt es, läuft der Workflow grün durch und
+  verschickt nichts – diesen Pfad nicht kaputt machen.
+- Verschickt werden reine `data`-Nachrichten; die Anzeige macht der Service
+  Worker. Käme ein `notification`-Block dazu, erschienen zwei Mitteilungen.
+- `pushTokens`-Dokument-ID ist der SHA-256 des Tokens, damit dasselbe Gerät
+  sich nicht vervielfacht.
+- Auf iPhone/iPad kommt Web-Push nur in der über „Zum Home-Bildschirm"
+  installierten App an, nicht im Safari-Tab.
 
 ## Code-Konventionen
 

@@ -119,7 +119,7 @@
   .back-link:hover{color:var(--brass);}
 
   /* Buttons */
-  input[type=text],input[type=password],textarea{
+  input[type=text],input[type=password],input[type=time],textarea{
     background:var(--ink-bg-raised);
     border:1px solid var(--hairline);
     color:var(--paper-text);
@@ -137,7 +137,9 @@
   }
   textarea{resize:vertical;line-height:1.5;min-height:52px;}
   input[type=text]::placeholder,input[type=password]::placeholder,textarea::placeholder{color:var(--paper-text-dim);}
-  input[type=text]:focus,input[type=password]:focus,textarea:focus{border-color:var(--brass-dim);}
+  input[type=text]:focus,input[type=password]:focus,input[type=time]:focus,textarea:focus{border-color:var(--brass-dim);}
+  /* Uhrzeit-Feld: das eingebaute Symbol ist sonst fast unsichtbar */
+  input[type=time]{color-scheme:dark;}
 
   button.btn{
     background:var(--brass);
@@ -494,6 +496,44 @@
   }
   .sf-file-actions{display:flex;gap:6px;align-items:center;flex-shrink:0;}
   .sf-add{margin-top:16px;padding-top:14px;border-top:1px solid var(--hairline);}
+  /* Ordner-Überschrift in der Dateiliste */
+  .sf-folder{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;letter-spacing:.08em;
+    color:var(--paper-text-dim);
+    margin:16px 0 2px;
+    word-break:break-word;
+  }
+  .sf-folder:first-child{margin-top:0;}
+  /* Ablagebereich für Dateien und ganze Ordner (nur am Rechner) */
+  .sf-drop{
+    margin-top:10px;
+    border:1px dashed var(--hairline);
+    border-radius:4px;
+    padding:20px 16px;
+    text-align:center;
+    font-size:13px;
+    color:var(--paper-text-dim);
+    transition:border-color .12s ease, background .12s ease, color .12s ease;
+  }
+  .sf-drop.over{
+    border-color:var(--brass);
+    background:var(--ink-bg);
+    color:var(--paper-text);
+  }
+  /* Schalter „Bilder verkleinern“ */
+  .sf-opt{
+    display:flex;align-items:flex-start;gap:10px;
+    margin-top:12px;
+    font-size:13.5px;line-height:1.45;
+    color:var(--paper-text-dim);
+    cursor:pointer;
+  }
+  .sf-opt input{
+    width:18px;height:18px;flex-shrink:0;margin:1px 0 0;
+    accent-color:var(--brass);
+    cursor:pointer;
+  }
 
   /* To-dos */
   .todo-item{
@@ -860,6 +900,12 @@
   }
   .nav-item.active{color:var(--brass);}
   .nav-item:active{background:var(--ink-bg);}
+  /* Mit sechs Einträgen wird es bei knapp 901 px eng: dort verschwindet
+     die Mail-Adresse aus der userbar, dann genügt ein schmalerer Rand. */
+  @media (max-width:1150px){
+    .nav-inner{padding-right:150px;}
+    #userbar .ub-mail{display:none;}
+  }
   @media (max-width:900px){
     .nav-inner{padding-right:16px;padding-left:12px;}
     .nav-links{display:none;}
@@ -1056,6 +1102,7 @@
   const todosRef    = collection(db,'todos');
   const promptsRef  = collection(db,'savedPrompts');
   const savedFilesRef = collection(db,'savedFiles');
+  const pushTokensRef = collection(db,'pushTokens');
 
   function entriesRefFor(project){
     return project.legacyCollection
@@ -1121,7 +1168,8 @@
     {hash:'#/todos',   label:'To-dos'},
     {hash:'#/ideen',   label:'App-Ideen'},
     {hash:'#/prompts', label:'Prompts'},
-    {hash:'#/dateien', label:'Dateien'}
+    {hash:'#/dateien', label:'Dateien'},
+    {hash:'#/einstellungen', label:'Einstellungen'}
   ];
   const navEl = document.getElementById('mainnav');
   let navMenuClose = null;     // schliesst das offene Overlay-Menü
@@ -1215,6 +1263,7 @@
     else if(hash==='#/ideen')   renderIdeen();
     else if(hash==='#/prompts') renderPrompts();
     else if(hash==='#/dateien') renderSavedFilesView();
+    else if(hash==='#/einstellungen') renderSettings();
     else                        renderHome();
     window.scrollTo(0,0);
   }
@@ -2870,11 +2919,26 @@
   //  Aufklappen eines Eintrags nachgeladen werden.
   // ══════════════════════════════════════════════════════════
 
-  const MAX_FILE_BYTES = 500*1024;   // harte Grenze je Datei (Rohgrösse)
-  const MAX_IMAGE_EDGE = 1600;       // längste Kante nach dem Herunterrechnen
-  const IMAGE_QUALITY  = 0.8;        // JPEG-Qualität beim Export
+  // Ein Firestore-Dokument fasst nur 1 MiB. Alles, was länger als CHUNK_CHARS
+  // Base64-Zeichen ist, wird deshalb auf die parts-Subcollection verteilt und
+  // beim Herunterladen wieder zusammengesetzt. Kleine Dateien bleiben wie
+  // bisher im data-Feld des Datei-Dokuments – Altbestand läuft unverändert
+  // weiter, weil chunks dort schlicht fehlt (= 0).
+  const MAX_FILE_BYTES = 20*1024*1024;  // harte Grenze je Datei (Rohgrösse)
+  const CHUNK_CHARS    = 700000;        // Base64-Zeichen je Teilstück (durch 4 teilbar!)
+  const MAX_IMAGE_EDGE = 1600;          // längste Kante beim Verkleinern
+  const IMAGE_QUALITY  = 0.8;           // JPEG-Qualität beim Export
+  const THUMB_EDGE     = 240;           // Kantenlänge des Vorschaubilds
+  const THUMB_QUALITY  = 0.7;
+
+  // Ordner lassen sich nur am Rechner auswählen: iOS Safari kennt weder
+  // webkitdirectory noch das Ablegen ganzer Ordner. Statt eines toten
+  // Schalters wird der Ordner-Knopf dort erst gar nicht angezeigt.
+  const canPickFolders = ('webkitdirectory' in HTMLInputElement.prototype)
+    && window.matchMedia('(hover:hover) and (pointer:fine)').matches;
 
   function filesSubRef(docId){ return collection(db,'savedFiles',docId,'files'); }
+  function partsSubRef(docId,fileId){ return collection(db,'savedFiles',docId,'files',fileId,'parts'); }
 
   function fmtBytes(n){
     const b = Number(n)||0;
@@ -2913,10 +2977,10 @@
     });
   }
 
-  // Bilder auf MAX_IMAGE_EDGE herunterrechnen und als JPEG exportieren.
+  // Bild auf maxEdge herunterrechnen und als JPEG exportieren.
   // Der weisse Grund verhindert, dass transparente Flächen im JPEG schwarz
-  // werden. Klappt das Umrechnen nicht, wird das Original weiterverwendet.
-  function downscaleImage(file){
+  // werden. Klappt das Umrechnen nicht, kommt null zurück.
+  function renderImageTo(file,maxEdge,quality){
     return new Promise((resolve)=>{
       const url = URL.createObjectURL(file);
       const img = new Image();
@@ -2924,7 +2988,7 @@
       img.onload = ()=>{
         try{
           const edge  = Math.max(img.naturalWidth, img.naturalHeight) || 1;
-          const scale = Math.min(1, MAX_IMAGE_EDGE/edge);
+          const scale = Math.min(1, maxEdge/edge);
           const w = Math.max(1, Math.round(img.naturalWidth  * scale));
           const h = Math.max(1, Math.round(img.naturalHeight * scale));
           const canvas = document.createElement('canvas');
@@ -2933,7 +2997,7 @@
           ctx.fillStyle = 'white';
           ctx.fillRect(0,0,w,h);
           ctx.drawImage(img,0,0,w,h);
-          const dataUrl = canvas.toDataURL('image/jpeg',IMAGE_QUALITY);
+          const dataUrl = canvas.toDataURL('image/jpeg',quality);
           done(dataUrl.indexOf('data:image/jpeg')===0 ? dataUrl : null);
         }catch(err){ console.error(err); done(null); }
       };
@@ -2941,23 +3005,45 @@
       img.src = url;
     });
   }
+  function downscaleImage(file){ return renderImageTo(file,MAX_IMAGE_EDGE,IMAGE_QUALITY); }
+  // Kleines Vorschaubild fürs Auflisten. Nötig, weil grosse Bilder aufgeteilt
+  // gespeichert werden und ihr data-Feld dann leer ist – ohne thumb hätte die
+  // Liste keine Vorschau mehr.
+  function thumbnailOf(file){ return renderImageTo(file,THUMB_EDGE,THUMB_QUALITY); }
 
-  // Liefert das fertige Dokument für die files-Subcollection – oder wirft
-  // einen Fehler mit klarer Begründung samt tatsächlicher Grösse.
+  // Ordnerpfad einer Datei aus der Ordnerauswahl:
+  // „Konzepte/2024/bild.png“ → „Konzepte/2024“, lose Dateien → ''.
+  function filePathOf(file){
+    const rel = String((file && file.webkitRelativePath) || '');
+    const i = rel.lastIndexOf('/');
+    return i>0 ? rel.slice(0,i) : '';
+  }
+  // Auswahl einheitlich als {file,path}-Liste weiterreichen.
+  function toItems(fileList){
+    return Array.from(fileList||[]).map(f=>({file:f, path:filePathOf(f)}));
+  }
+
+  // Liefert Name, MIME, Rohgrösse, Ordnerpfad und den Base64-Inhalt – oder
+  // wirft einen Fehler mit klarer Begründung samt tatsächlicher Grösse.
   // Nichts wird stillschweigend abgeschnitten.
-  async function prepareFile(file){
+  // opts.shrinkImages===false speichert Bilder unverändert im Original.
+  async function prepareFile(file,opts={}){
     const isImage = String(file.type||'').toLowerCase().indexOf('image/')===0;
+    const shrink  = isImage && opts.shrinkImages!==false;
     let name = file.name || 'Datei';
     let mime = safeMime(file.type,'application/octet-stream');
     let b64  = '';
 
-    // Grosse Nicht-Bilder gar nicht erst einlesen – die Rohgrösse steht fest.
-    if(!isImage && file.size > MAX_FILE_BYTES){
+    // Zu grosse Dateien gar nicht erst einlesen. Bilder dürfen die Grenze
+    // zunächst überschreiten – verkleinert rutschen sie meist darunter –,
+    // uferlos gross dürfen aber auch sie nicht sein.
+    const preLimit = shrink ? Math.max(MAX_FILE_BYTES, 60*1024*1024) : MAX_FILE_BYTES;
+    if(file.size > preLimit){
       throw new Error('„'+name+'“ ist mit '+fmtBytes(file.size)+' zu gross. '+
         'Pro Datei sind höchstens '+fmtBytes(MAX_FILE_BYTES)+' möglich.');
     }
 
-    if(isImage){
+    if(shrink){
       const dataUrl = await downscaleImage(file);
       if(dataUrl){
         b64  = stripDataUrl(dataUrl);
@@ -2972,21 +3058,99 @@
     const size = base64Bytes(b64);
     if(size > MAX_FILE_BYTES){
       throw new Error('„'+(file.name||'Datei')+'“ ist mit '+fmtBytes(size)+' zu gross'+
-        (isImage ? ' – auch heruntergerechnet auf '+MAX_IMAGE_EDGE+' px. ' : '. ')+
+        (shrink ? ' – auch verkleinert auf '+MAX_IMAGE_EDGE+' px. ' : '. ')+
         'Pro Datei sind höchstens '+fmtBytes(MAX_FILE_BYTES)+' möglich.');
     }
-    return {name, mime, size, data:b64, createdAt:serverTimestamp()};
+
+    // Vorschaubild getrennt ablegen: aufgeteilte Bilder haben kein data-Feld
+    // mehr, ohne thumb bliebe die Liste sonst ohne Vorschau.
+    let thumb = '';
+    if(isImage){
+      const t = await thumbnailOf(file);
+      if(t) thumb = stripDataUrl(t);
+    }
+    return {name, mime, size, b64, thumb, path:String(opts.path||'')};
   }
 
-  // Legt die ausgewählten Dateien in der files-Subcollection ab und meldet
-  // jede abgelehnte Datei einzeln zurück.
-  async function storeFiles(docId,list){
+  // Schreibt eine vorbereitete Datei. Passt der Inhalt in ein Dokument,
+  // landet er wie bisher im data-Feld (chunks: 0). Sonst kommen die
+  // Teilstücke in die parts-Subcollection und chunks hält ihre Anzahl fest.
+  async function writeFileDoc(docId,prepared,onProgress){
+    const b64 = prepared.b64;
+    const meta = {
+      name:prepared.name, mime:prepared.mime, size:prepared.size,
+      path:prepared.path||'', thumb:prepared.thumb||'', createdAt:serverTimestamp()
+    };
+    if(b64.length <= CHUNK_CHARS){
+      await addDoc(filesSubRef(docId), Object.assign({},meta,{data:b64, chunks:0}));
+      if(onProgress) onProgress(1);
+      return;
+    }
+    // An einer durch 4 teilbaren Stelle trennen: dann trägt nur das letzte
+    // Stück Base64-Auffüllzeichen und die Teile lassen sich später einfach
+    // wieder aneinanderhängen.
+    const slices = [];
+    for(let i=0;i<b64.length;i+=CHUNK_CHARS) slices.push(b64.slice(i,i+CHUNK_CHARS));
+    // Erst das Datei-Dokument, dann die Teile – so ist der Eintrag auch bei
+    // einem Abbruch sichtbar und lässt sich wieder löschen.
+    const ref = await addDoc(filesSubRef(docId), Object.assign({},meta,{data:'', chunks:slices.length}));
+    const parts = partsSubRef(docId,ref.id);
+    // Mehrere Teile je Schreibvorgang bündeln, aber unter dem Anfrage-Limit
+    // von Firestore bleiben – deshalb höchstens acht Stück auf einmal.
+    for(let i=0;i<slices.length;i+=8){
+      const batch = writeBatch(db);
+      slices.slice(i,i+8).forEach((s,k)=>{
+        // Laufende, aufgefüllte IDs: dadurch liefert Firestore die Teile
+        // schon in der richtigen Reihenfolge zurück.
+        batch.set(doc(parts,String(i+k).padStart(4,'0')),{i:i+k, data:s});
+      });
+      await batch.commit();
+      if(onProgress) onProgress(Math.min(1,(i+8)/slices.length));
+    }
+  }
+
+  // Vollständiger Base64-Inhalt einer Datei. Aufgeteilte Dateien werden
+  // dafür erst nachgeladen.
+  async function loadFileData(docId,fileId,f){
+    const chunks = Number(f && f.chunks) || 0;
+    if(chunks<=0) return String((f && f.data) || '');
+    const snap = await getDocs(partsSubRef(docId,fileId));
+    const rows = snap.docs.map(d=>d.data()).sort((a,b)=>(a.i??0)-(b.i??0));
+    if(rows.length !== chunks){
+      throw new Error('Die Datei ist unvollständig gespeichert – '+
+        rows.length+' von '+chunks+' Teilen gefunden.');
+    }
+    return rows.map(r=>String(r.data||'')).join('');
+  }
+
+  // Beim Löschen einer Datei müssen ihre Teilstücke mit weg.
+  async function deleteFileDoc(docId,fileId,f){
+    if(Number(f && f.chunks) > 0){
+      const snap = await getDocs(partsSubRef(docId,fileId));
+      const list = snap.docs;
+      for(let i=0;i<list.length;i+=400){    // ein writeBatch fasst max. 500 Schreibvorgänge
+        const batch = writeBatch(db);
+        list.slice(i,i+400).forEach(d=>batch.delete(d.ref));
+        await batch.commit();
+      }
+    }
+    await deleteDoc(doc(db,'savedFiles',docId,'files',fileId));
+  }
+
+  // Legt die ausgewählten Dateien ab und meldet jede abgelehnte einzeln
+  // zurück. onStatus bekommt laufend den Fortschritt zum Anzeigen.
+  async function storeFiles(docId,list,opts={},onStatus){
     const errors = [], saved = [];
-    for(const file of list){
+    for(let n=0;n<list.length;n++){
+      const file = list[n].file;
+      const label = list.length>1 ? ('Datei '+(n+1)+' von '+list.length+' · ') : '';
       try{
-        const payload = await prepareFile(file);
-        await addDoc(filesSubRef(docId),payload);
-        saved.push(payload.name);
+        if(onStatus) onStatus(label+'„'+(file.name||'Datei')+'“ wird gelesen …');
+        const prepared = await prepareFile(file,Object.assign({},opts,{path:list[n].path}));
+        await writeFileDoc(docId,prepared,(p)=>{
+          if(onStatus) onStatus(label+'„'+prepared.name+'“ wird gespeichert … '+Math.round(p*100)+' %');
+        });
+        saved.push(prepared.name);
       }catch(err){
         console.error(err);
         errors.push(err && err.code
@@ -3003,10 +3167,13 @@
 
   // Base64 → Blob → Objekt-URL → Anker mit download-Attribut.
   // Die Objekt-URL wird danach wieder freigegeben, sonst bleibt sie im Speicher.
-  function downloadFile(f){
+  // Aufgeteilte Dateien werden vorher nachgeladen, deshalb asynchron.
+  async function downloadFile(docId,fileId,f,btn){
+    const orig = btn ? btn.textContent : '';
+    if(btn){ btn.disabled = true; btn.textContent = 'Lädt …'; }
     let url = '';
     try{
-      const bin = atob(String(f.data||''));
+      const bin = atob(await loadFileData(docId,fileId,f));
       const bytes = new Uint8Array(bin.length);
       for(let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
       const blob = new Blob([bytes],{type:safeMime(f.mime,'application/octet-stream')});
@@ -3017,9 +3184,119 @@
       a.remove();
     }catch(err){
       console.error(err);
-      alert('Die Datei konnte nicht zum Herunterladen vorbereitet werden.');
+      alert('Die Datei konnte nicht zum Herunterladen vorbereitet werden.'+
+        (err && err.message ? ' '+err.message : ''));
     }
+    if(btn){ btn.disabled = false; btn.textContent = orig; }
     if(url) setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+
+  // ── Dateiauswahl inkl. Ordnern ────────────────────────────
+  // Liest einen abgelegten Ordner rekursiv aus. Der Pfad wird dabei
+  // mitgeführt, damit die Struktur erhalten bleibt.
+  function readDropEntry(entry,prefix,out){
+    return new Promise((resolve)=>{
+      if(!entry){ resolve(); return; }
+      if(entry.isFile){
+        entry.file((file)=>{ out.push({file, path:prefix.replace(/\/$/,'')}); resolve(); },
+                   ()=>resolve());
+        return;
+      }
+      if(entry.isDirectory){
+        const reader = entry.createReader();
+        const all = [];
+        // readEntries liefert bei grossen Ordnern nur Teilmengen –
+        // so lange nachfragen, bis nichts mehr kommt.
+        const step = ()=>reader.readEntries(async(list)=>{
+          if(list && list.length){ all.push(...list); step(); return; }
+          for(const child of all) await readDropEntry(child, prefix+entry.name+'/', out);
+          resolve();
+        },()=>resolve());
+        step();
+        return;
+      }
+      resolve();
+    });
+  }
+
+  // Gemeinsame Auswahl für beide Formulare: Einzeldateien, am Rechner
+  // zusätzlich ganze Ordner und ein Ablagebereich. Liefert {file,path}.
+  function buildFilePicker(){
+    let dropped = [];
+    const fileInput = el('input',{class:'file-input',type:'file',multiple:'multiple'});
+    const folderInput = canPickFolders
+      ? el('input',{class:'file-input',type:'file',multiple:'multiple',style:'display:none;'})
+      : null;
+    if(folderInput) folderInput.webkitdirectory = true;
+
+    const shrinkBox = el('input',{type:'checkbox'});
+    shrinkBox.checked = true;
+    const summary = el('p',{class:'hg-sub',style:'margin:10px 0 0;'});
+
+    function items(){
+      return toItems(fileInput.files)
+        .concat(folderInput ? toItems(folderInput.files) : [])
+        .concat(dropped);
+    }
+    function paint(){
+      const n = items().length;
+      summary.textContent = n===0
+        ? 'Noch nichts ausgewählt.'
+        : (n===1 ? '1 Datei ausgewählt.' : n+' Dateien ausgewählt.');
+    }
+    function clear(){
+      dropped = [];
+      fileInput.value = '';
+      if(folderInput) folderInput.value = '';
+      paint();
+    }
+    fileInput.addEventListener('change',paint);
+    if(folderInput) folderInput.addEventListener('change',paint);
+
+    const box = el('div',{},[fileInput]);
+
+    if(canPickFolders){
+      const zone = el('div',{class:'sf-drop',text:'Dateien oder ganze Ordner hierher ziehen'});
+      zone.addEventListener('dragover',(e)=>{ e.preventDefault(); zone.classList.add('over'); });
+      zone.addEventListener('dragleave',()=>zone.classList.remove('over'));
+      zone.addEventListener('drop',async(e)=>{
+        e.preventDefault();
+        zone.classList.remove('over');
+        summary.textContent = 'Auswahl wird gelesen …';
+        const out = [];
+        const entries = Array.from((e.dataTransfer && e.dataTransfer.items) || [])
+          .map(it=> it.webkitGetAsEntry ? it.webkitGetAsEntry() : null).filter(Boolean);
+        if(entries.length){
+          for(const en of entries) await readDropEntry(en,'',out);
+        }else{
+          Array.from((e.dataTransfer && e.dataTransfer.files) || [])
+            .forEach(f=>out.push({file:f, path:''}));
+        }
+        dropped = dropped.concat(out);
+        paint();
+      });
+      box.appendChild(el('div',{style:'display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;'},[
+        el('button',{class:'pill-btn',type:'button',text:'Ordner wählen',
+          onclick:()=>folderInput.click()}),
+        el('button',{class:'pill-btn',type:'button',text:'Auswahl zurücksetzen',
+          onclick:clear})
+      ]));
+      box.appendChild(folderInput);
+      box.appendChild(zone);
+    }
+
+    box.appendChild(el('label',{class:'sf-opt'},[
+      shrinkBox,
+      el('span',{text:'Bilder auf '+MAX_IMAGE_EDGE+' px verkleinern (empfohlen – spart Platz)'})
+    ]));
+    box.appendChild(el('p',{class:'hg-sub',style:'margin:8px 0 0;',
+      text:'Höchstens '+fmtBytes(MAX_FILE_BYTES)+' je Datei.'+
+        (canPickFolders ? ' Ordnerstruktur bleibt erhalten.'
+                        : ' Ordner lassen sich auf dem iPhone nicht auswählen – dort mehrere Dateien auf einmal wählen oder den Ordner vorher als ZIP packen.')}));
+    box.appendChild(summary);
+    paint();
+
+    return {node:box, items, clear, opts:()=>({shrinkImages:shrinkBox.checked})};
   }
 
   // ── Formular: neuer Eintrag ───────────────────────────────
@@ -3028,7 +3305,7 @@
       placeholder:'Kurz: worum geht es?'});
     const descTa = el('textarea',{rows:'3',maxlength:'4000',
       placeholder:'Beschreibung, Kontext, Konzept … (optional)'});
-    const fileInput = el('input',{class:'file-input',type:'file',multiple:'multiple'});
+    const picker = buildFilePicker();
     const btn = el('button',{class:'btn',text:'Eintrag speichern'});
     const status = el('p',{class:'hg-status',style:'display:none;'});
 
@@ -3037,10 +3314,7 @@
       el('div',{class:'field'},[el('label',{text:'Beschreibung'}),descTa]),
       el('div',{class:'field'},[
         el('label',{text:'Dateien (optional, mehrere möglich)'}),
-        fileInput,
-        el('p',{class:'hg-sub',text:'Bilder werden auf '+MAX_IMAGE_EDGE+' px längste Kante '+
-          'heruntergerechnet und als JPEG gespeichert. Danach gilt für jede Datei eine '+
-          'Grenze von '+fmtBytes(MAX_FILE_BYTES)+'.'})
+        picker.node
       ]),
       el('div',{class:'sp-form-actions'},[btn]),
       status
@@ -3049,7 +3323,7 @@
     form.addEventListener('submit',async(e)=>{
       e.preventDefault();
       const title = titleInput.value.trim();
-      const list  = Array.from(fileInput.files||[]);
+      const list  = picker.items();
       if(!title && list.length===0){ titleInput.focus(); return; }
       btn.disabled=true;
       status.style.display=''; status.className='hg-status';
@@ -3063,8 +3337,10 @@
           order:minOrder-1,
           createdAt:serverTimestamp()
         });
-        const res = list.length ? await storeFiles(ref.id,list) : {errors:[],message:'Gespeichert.'};
-        titleInput.value=''; descTa.value=''; fileInput.value='';
+        const res = list.length
+          ? await storeFiles(ref.id,list,picker.opts(),(m)=>{ status.textContent=m; })
+          : {errors:[],message:'Gespeichert.'};
+        titleInput.value=''; descTa.value=''; picker.clear();
         status.className = 'hg-status'+(res.errors.length?' err':' ok');
         status.textContent = res.errors.length ? res.message : 'Gespeichert.';
       }catch(err){
@@ -3079,18 +3355,22 @@
 
   // ── Dateien nachträglich anhängen ─────────────────────────
   function buildFileAdder(docId){
-    const input  = el('input',{class:'file-input',type:'file',multiple:'multiple'});
+    const picker = buildFilePicker();
     const btn    = el('button',{class:'btn small',type:'button',text:'Dateien hinzufügen'});
     const status = el('p',{class:'hg-status',style:'display:none;'});
 
     btn.addEventListener('click',async()=>{
-      const list = Array.from(input.files||[]);
-      if(list.length===0){ input.click(); return; }
+      const list = picker.items();
+      if(list.length===0){
+        status.style.display=''; status.className='hg-status';
+        status.textContent='Bitte zuerst Dateien auswählen.';
+        return;
+      }
       btn.disabled=true;
       status.style.display=''; status.className='hg-status';
       status.textContent='Dateien werden verarbeitet …';
-      const res = await storeFiles(docId,list);
-      input.value='';
+      const res = await storeFiles(docId,list,picker.opts(),(m)=>{ status.textContent=m; });
+      picker.clear();
       status.className='hg-status'+(res.errors.length?' err':' ok');
       status.textContent=res.message;
       btn.disabled=false;
@@ -3099,7 +3379,7 @@
     return el('div',{class:'sf-add'},[
       el('div',{class:'field',style:'margin-bottom:12px;'},[
         el('label',{text:'Weitere Dateien anhängen'}),
-        input
+        picker.node
       ]),
       btn,
       status
@@ -3111,27 +3391,57 @@
     const row = el('div',{class:'sf-file'});
     const mime = safeMime(f.mime,'application/octet-stream');
 
-    // Bilder als kleine Vorschau, alles andere nur als Zeile
-    if(mime.indexOf('image/')===0 && f.data){
+    // Vorschau bevorzugt aus dem kleinen thumb-Feld: aufgeteilte Bilder haben
+    // kein data-Feld mehr. Ältere Dateien ohne thumb nutzen weiter data.
+    const previewData = f.thumb ? String(f.thumb)
+                      : ((Number(f.chunks)||0)===0 && f.data ? String(f.data) : '');
+    const previewMime = f.thumb ? 'image/jpeg' : mime;
+    if(mime.indexOf('image/')===0 && previewData){
       row.appendChild(el('img',{class:'sf-thumb',alt:f.name||'Bild',
-        src:'data:'+mime+';base64,'+String(f.data)}));
+        src:'data:'+previewMime+';base64,'+previewData}));
     }
+
+    const chunks = Number(f.chunks)||0;
     row.appendChild(el('div',{class:'sf-file-name'},[
       el('div',{text:f.name||'Ohne Namen'}),
-      el('div',{class:'sf-file-size',text:fmtBytes(f.size)})
+      el('div',{class:'sf-file-size',
+        text:fmtBytes(f.size)+(chunks>0 ? ' · '+chunks+' Teile' : '')})
     ]));
 
     const actions = el('div',{class:'sf-file-actions'});
-    actions.appendChild(el('button',{class:'pill-btn',type:'button',
-      text:'Herunterladen',onclick:()=>downloadFile(f)}));
+    const dlBtn = el('button',{class:'pill-btn',type:'button',text:'Herunterladen'});
+    dlBtn.addEventListener('click',()=>downloadFile(docId,fileId,f,dlBtn));
+    actions.appendChild(dlBtn);
     actions.appendChild(el('button',{class:'row-btn del',type:'button',title:'Datei löschen',
       text:'✕',style:'opacity:.85;',onclick:async()=>{
         if(!confirm('Die Datei „'+(f.name||'Ohne Namen')+'“ löschen?')) return;
-        try{ await deleteDoc(doc(db,'savedFiles',docId,'files',fileId)); }
+        try{ await deleteFileDoc(docId,fileId,f); }
         catch(err){ console.error(err); alert('Konnte nicht gelöscht werden. '+describeError(err)); }
       }}));
     row.appendChild(actions);
     return row;
+  }
+
+  // Dateien nach Ordner gruppiert ausgeben. Lose Dateien stehen oben,
+  // danach je Ordner eine Überschrift.
+  function paintFileList(container,docId,docs){
+    const groups = new Map();
+    docs.forEach(d=>{
+      const key = String((d.data && d.data.path) || '');
+      if(!groups.has(key)) groups.set(key,[]);
+      groups.get(key).push(d);
+    });
+    const keys = Array.from(groups.keys()).sort((a,b)=>{
+      if(!a) return -1;                 // lose Dateien zuerst
+      if(!b) return 1;
+      return a.localeCompare(b,'de');
+    });
+    keys.forEach(key=>{
+      if(key) container.appendChild(el('p',{class:'sf-folder',text:'📁 '+key}));
+      groups.get(key)
+        .sort((a,b)=>String(a.data.name||'').localeCompare(String(b.data.name||''),'de'))
+        .forEach(d=> container.appendChild(buildFileRow(docId,d.id,d.data)));
+    });
   }
 
   // ── Echtzeit-Anbindung ────────────────────────────────────
@@ -3180,18 +3490,15 @@
     }catch(err){ console.error(err); alert('Reihenfolge konnte nicht geändert werden.'); }
   }
 
-  // Firestore räumt Subcollections NICHT automatisch ab – die Dokumente der
-  // files-Subcollection müssen deshalb ausdrücklich mit gelöscht werden.
+  // Firestore räumt Subcollections NICHT automatisch ab – die Dateien und
+  // deren Teilstücke müssen deshalb ausdrücklich mit gelöscht werden.
   async function deleteSavedFile(id,title){
     if(!confirm('Den Eintrag „'+((title||'').trim()||'Ohne Titel')+
                 '“ mit allen angehängten Dateien löschen?')) return;
     try{
       const snap = await getDocs(filesSubRef(id));
-      const list = snap.docs;
-      for(let i=0;i<list.length;i+=400){        // ein writeBatch fasst max. 500 Schreibvorgänge
-        const batch = writeBatch(db);
-        list.slice(i,i+400).forEach(d=>batch.delete(d.ref));
-        await batch.commit();
+      for(const d of snap.docs){
+        await deleteFileDoc(id,d.id,d.data());
       }
       await deleteDoc(doc(db,'savedFiles',id));
     }catch(err){ console.error(err); alert('Konnte nicht gelöscht werden. '+describeError(err)); }
@@ -3235,7 +3542,7 @@
             text:'Noch keine Dateien angehängt.'}));
           return;
         }
-        snap.docs.forEach(d=> listWrap.appendChild(buildFileRow(id,d.id,d.data())));
+        paintFileList(listWrap, id, snap.docs.map(d=>({id:d.id, data:d.data()})));
       },(err)=>{
         console.error(err);
         listWrap.innerHTML='';
@@ -3311,6 +3618,320 @@
 
     restore(null);
     return item;
+  }
+
+  // ══════════════════════════════════════════════════════════
+  //  EINSTELLUNGEN · tägliche To-do-Erinnerung
+  //
+  //  Eine Webseite kann sich selbst KEINE Benachrichtigung auf eine
+  //  Uhrzeit legen – zu dem Zeitpunkt ist sie ja geschlossen. Der
+  //  Versand kommt deshalb von aussen: der GitHub-Actions-Workflow
+  //  „To-do-Erinnerung“ läuft alle 15 Minuten, liest die Einstellungen
+  //  und die offenen To-dos aus Firestore und schickt zur eingestellten
+  //  Uhrzeit einmal pro Tag eine Nachricht an die angemeldeten Geräte.
+  //
+  //  Ablage:
+  //    settings/notifications → { enabled, time, timezone, lastSentDate }
+  //    settings/push          → { vapidPublicKey }   (Web-Push-Zertifikat)
+  //    pushTokens/{hash}      → { token, label, ua, createdAt, lastSeenAt }
+  //
+  //  Die Dokument-ID der Token ist der SHA-256 des Tokens: dadurch legt
+  //  dasselbe Gerät bei jeder Anmeldung denselben Eintrag an, statt sich
+  //  zu vervielfachen.
+  // ══════════════════════════════════════════════════════════
+
+  const NOTIFY_DOC = ()=>doc(db,'settings','notifications');
+  const PUSH_DOC   = ()=>doc(db,'settings','push');
+
+  // Öffentlicher Teil des Web-Push-Zertifikats (Firebase Console →
+  // Projekteinstellungen → Cloud Messaging → Web Push certificates).
+  // Er ist wie der apiKey öffentlich und KEIN Geheimnis: damit meldet sich
+  // nur das Gerät beim Push-Dienst an. Abgesichert ist der Versand über den
+  // privaten Dienstkonto-Schlüssel im GitHub-Secret.
+  // Ein in settings/push hinterlegter Wert hat Vorrang – so lässt sich der
+  // Schlüssel bei Bedarf ohne Code-Änderung austauschen.
+  const DEFAULT_VAPID_PUBLIC_KEY =
+    'BLJEpi37pB3FIAucj_NB5lGk5AzkNLvcv-UZivRUpRAs3t5j3jjNWp0wj-CCEEtGihTFT2h9dk0NtSjzzghHIrA';
+
+  function defaultNotifySettings(){
+    let tz = 'Europe/Zurich';
+    try{ tz = Intl.DateTimeFormat().resolvedOptions().timeZone || tz; }catch(e){}
+    return { enabled:false, time:'09:00', timezone:tz, lastSentDate:'' };
+  }
+  // Defensiv lesen – fehlende oder falsch getippte Werte werden ersetzt.
+  function readNotifySettings(raw){
+    const d = defaultNotifySettings();
+    const r = (raw && typeof raw==='object') ? raw : {};
+    return {
+      enabled: r.enabled===true,
+      time: /^([01]\d|2[0-3]):[0-5]\d$/.test(String(r.time||'')) ? String(r.time) : d.time,
+      timezone: (typeof r.timezone==='string' && r.timezone.trim()) ? r.timezone.trim() : d.timezone,
+      lastSentDate: typeof r.lastSentDate==='string' ? r.lastSentDate : ''
+    };
+  }
+
+  async function sha256Hex(text){
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  }
+  function deviceLabel(){
+    const ua = navigator.userAgent || '';
+    if(/iPhone/.test(ua))     return 'iPhone';
+    if(/iPad/.test(ua))       return 'iPad';
+    if(/Android/.test(ua))    return 'Android';
+    if(/Macintosh/.test(ua))  return 'Mac';
+    if(/Windows/.test(ua))    return 'Windows-PC';
+    return 'Dieses Gerät';
+  }
+  // Auf dem iPhone kommt Web-Push nur an, wenn die Seite über
+  // „Zum Home-Bildschirm“ installiert wurde – im normalen Safari-Tab nicht.
+  function isIos(){ return /iPhone|iPad|iPod/.test(navigator.userAgent||''); }
+  function isStandalone(){
+    return window.navigator.standalone===true
+        || window.matchMedia('(display-mode: standalone)').matches;
+  }
+
+  // Meldet dieses Gerät an. Wirft mit verständlichem Text, wo es hakt.
+  async function enablePushOnThisDevice(onStep){
+    const step = (m)=>{ if(onStep) onStep(m); };
+    if(!('serviceWorker' in navigator) || !('Notification' in window) || !('PushManager' in window)){
+      throw new Error('Dieser Browser kann keine Benachrichtigungen empfangen.');
+    }
+    if(isIos() && !isStandalone()){
+      throw new Error('Auf dem iPhone und iPad funktionieren Benachrichtigungen nur, wenn die Seite '+
+        'über „Teilen → Zum Home-Bildschirm“ installiert ist. Bitte von dort erneut öffnen.');
+    }
+
+    step('Web-Push-Zertifikat wird gelesen …');
+    // Ein in settings/push hinterlegter Schlüssel hat Vorrang, sonst gilt
+    // der fest eingetragene. Ist settings/push nicht lesbar, ist das kein
+    // Grund abzubrechen – dann zählt einfach der Standardschlüssel.
+    let vapid = DEFAULT_VAPID_PUBLIC_KEY;
+    try{
+      const snap = await getDoc(PUSH_DOC());
+      if(snap.exists()){
+        const eigener = String((snap.data()||{}).vapidPublicKey || '').trim();
+        if(eigener) vapid = eigener;
+      }
+    }catch(err){ console.warn('settings/push nicht lesbar:',err); }
+    if(!vapid){
+      throw new Error('Es fehlt noch das Web-Push-Zertifikat. Unten unter „Technische Einrichtung“ '+
+        'den öffentlichen Schlüssel aus der Firebase Console eintragen.');
+    }
+
+    step('Erlaubnis wird abgefragt …');
+    const perm = await Notification.requestPermission();
+    if(perm!=='granted'){
+      throw new Error(perm==='denied'
+        ? 'Benachrichtigungen sind für diese Seite blockiert. Das lässt sich nur in den '+
+          'Browser-Einstellungen wieder freigeben.'
+        : 'Ohne Erlaubnis können keine Benachrichtigungen ankommen.');
+    }
+
+    step('Hintergrunddienst wird eingerichtet …');
+    // Relativer Pfad: funktioniert unter github.io/Verbesserungsprotokoll/
+    // genauso wie unter einer eigenen Domain.
+    const reg = await navigator.serviceWorker.register('firebase-messaging-sw.js');
+    await navigator.serviceWorker.ready;
+
+    step('Gerät wird angemeldet …');
+    // Erst hier nachladen: so bleibt der Start der App schlank und
+    // Browser ohne Push-Unterstützung stolpern nicht darüber.
+    const mod = await import('https://www.gstatic.com/firebasejs/10.13.0/firebase-messaging.js');
+    if(typeof mod.isSupported==='function' && !(await mod.isSupported())){
+      throw new Error('Dieser Browser unterstützt Web-Push nicht.');
+    }
+    const token = await mod.getToken(mod.getMessaging(fb),{
+      vapidKey: vapid, serviceWorkerRegistration: reg
+    });
+    if(!token) throw new Error('Es kam kein Anmelde-Token zurück – bitte noch einmal versuchen.');
+
+    await setDoc(doc(db,'pushTokens', await sha256Hex(token)),{
+      token,
+      label: deviceLabel(),
+      ua: String(navigator.userAgent||'').slice(0,300),
+      createdAt: serverTimestamp(),
+      lastSeenAt: serverTimestamp()
+    });
+    return token;
+  }
+
+  function renderSettings(){
+    app.innerHTML='';
+    const h = buildSectionHead('⚙️ Einstellungen','Benachrichtigungen');
+    app.appendChild(h.header);
+
+    // ── Tägliche Erinnerung ──────────────────────────────────
+    const enabledBox = el('input',{type:'checkbox'});
+    const timeInput  = el('input',{type:'time',class:'time-input',value:'09:00'});
+    const tzLine     = el('p',{class:'hg-sub',style:'margin:8px 0 0;'});
+    const saveBtn    = el('button',{class:'btn',type:'button',text:'Speichern'});
+    const saveStatus = el('p',{class:'hg-status',style:'display:none;'});
+    let current = defaultNotifySettings();
+
+    function paintSettings(){
+      enabledBox.checked = current.enabled;
+      timeInput.value    = current.time;
+      tzLine.textContent = 'Zeitzone: '+current.timezone+
+        (current.lastSentDate ? ' · zuletzt gesendet am '+current.lastSentDate : '');
+    }
+
+    saveBtn.addEventListener('click',async()=>{
+      saveBtn.disabled=true;
+      saveStatus.style.display=''; saveStatus.className='hg-status';
+      saveStatus.textContent='Wird gespeichert …';
+      let tz = current.timezone;
+      try{ tz = Intl.DateTimeFormat().resolvedOptions().timeZone || tz; }catch(e){}
+      try{
+        await setDoc(NOTIFY_DOC(),{
+          enabled: enabledBox.checked,
+          time: /^([01]\d|2[0-3]):[0-5]\d$/.test(timeInput.value) ? timeInput.value : '09:00',
+          timezone: tz,
+          updatedAt: serverTimestamp()
+        },{merge:true});
+        saveStatus.className='hg-status ok';
+        saveStatus.textContent = enabledBox.checked
+          ? 'Gespeichert. Die Erinnerung kommt täglich um '+timeInput.value+' Uhr.'
+          : 'Gespeichert. Es werden keine Erinnerungen mehr verschickt.';
+      }catch(err){
+        console.error(err);
+        saveStatus.className='hg-status err';
+        saveStatus.textContent=describeError(err);
+      }
+      saveBtn.disabled=false;
+    });
+
+    app.appendChild(el('div',{class:'sp-form'},[
+      el('p',{class:'section-label',text:'Tägliche Erinnerung'}),
+      el('p',{class:'hg-hint',text:'Einmal am Tag eine Mitteilung mit deinen offenen To-dos. '+
+        'Verschickt wird sie von aussen, die App muss dafür nicht offen sein.'}),
+      el('label',{class:'sf-opt'},[
+        enabledBox,
+        el('span',{text:'Tägliche Erinnerung an offene To-dos'})
+      ]),
+      el('div',{class:'field',style:'margin-top:16px;max-width:220px;'},[
+        el('label',{text:'Uhrzeit'}),
+        timeInput
+      ]),
+      tzLine,
+      el('div',{class:'sp-form-actions',style:'margin-top:16px;'},[saveBtn]),
+      saveStatus
+    ]));
+
+    // ── Geräte ───────────────────────────────────────────────
+    const deviceStatus = el('p',{class:'hg-status',style:'display:none;'});
+    const enableBtn = el('button',{class:'btn',type:'button',text:'Benachrichtigungen auf diesem Gerät erlauben'});
+    enableBtn.addEventListener('click',async()=>{
+      enableBtn.disabled=true;
+      deviceStatus.style.display=''; deviceStatus.className='hg-status';
+      try{
+        await enablePushOnThisDevice((m)=>{ deviceStatus.textContent=m; });
+        deviceStatus.className='hg-status ok';
+        deviceStatus.textContent='Dieses Gerät ist angemeldet.';
+      }catch(err){
+        console.error(err);
+        deviceStatus.className='hg-status err';
+        deviceStatus.textContent = err && err.message ? err.message : describeError(err);
+      }
+      enableBtn.disabled=false;
+    });
+
+    const deviceList = el('div');
+    const deviceBox = el('div',{class:'sp-form',style:'border-top:1px solid var(--hairline);padding-top:28px;'},[
+      el('p',{class:'section-label',text:'Angemeldete Geräte'}),
+      el('p',{class:'hg-hint',text:'Jedes Gerät muss sich einmal selbst anmelden. '+
+        (isIos()
+          ? 'Auf dem iPhone geht das nur, wenn die Seite über „Teilen → Zum Home-Bildschirm“ installiert ist.'
+          : 'Auf dem iPhone geht das nur aus der über „Zum Home-Bildschirm“ installierten App heraus.')}),
+      el('div',{class:'sp-form-actions'},[enableBtn]),
+      deviceStatus,
+      deviceList
+    ]);
+    app.appendChild(deviceBox);
+
+    // ── Technische Einrichtung (eingeklappt) ─────────────────
+    const vapidInput = el('input',{type:'text',placeholder:'B… – öffentlicher Schlüssel',
+      autocapitalize:'off',autocorrect:'off',spellcheck:'false'});
+    const vapidBtn = el('button',{class:'btn small',type:'button',text:'Schlüssel speichern'});
+    const vapidMsg = el('p',{class:'hg-status',style:'display:none;'});
+    vapidBtn.addEventListener('click',async()=>{
+      vapidBtn.disabled=true;
+      vapidMsg.style.display=''; vapidMsg.className='hg-status';
+      vapidMsg.textContent='Wird gespeichert …';
+      try{
+        await setDoc(PUSH_DOC(),{
+          vapidPublicKey: vapidInput.value.trim(), updatedAt: serverTimestamp()
+        },{merge:true});
+        vapidMsg.className='hg-status ok';
+        vapidMsg.textContent='Gespeichert. Jetzt oben das Gerät anmelden.';
+      }catch(err){
+        console.error(err);
+        vapidMsg.className='hg-status err';
+        vapidMsg.textContent=describeError(err);
+      }
+      vapidBtn.disabled=false;
+    });
+
+    app.appendChild(el('details',{class:'hg-json'},[
+      el('summary',{text:'Technische Einrichtung'}),
+      el('p',{class:'hg-hint',text:'Hier ist nichts zu tun – das Web-Push-Zertifikat steckt bereits '+
+        'im Code. Dieses Feld ist nur dafür da, den Schlüssel auszutauschen, falls er in der '+
+        'Firebase Console jemals neu erzeugt wird. Dann hier eintragen, statt den Code zu ändern.'}),
+      el('ol',{class:'gh-steps',html:
+        '<li>Firebase Console → <strong>Projekteinstellungen → Cloud Messaging</strong> öffnen.</li>'+
+        '<li>Unter <strong>Web Push certificates</strong> ein Schlüsselpaar erzeugen.</li>'+
+        '<li>Den angezeigten <strong>öffentlichen Schlüssel</strong> hier einfügen und speichern. '+
+        'Er ist nicht geheim – abgesichert wird der Versand über den privaten Schlüssel im '+
+        'GitHub-Secret.</li>'}),
+      el('div',{class:'field'},[el('label',{text:'Web-Push-Zertifikat (öffentlicher Schlüssel)'}),vapidInput]),
+      el('div',{},[vapidBtn]),
+      vapidMsg
+    ]));
+
+    app.appendChild(buildFooter());
+
+    // ── Daten laden ──────────────────────────────────────────
+    track(onSnapshot(NOTIFY_DOC(),(snap)=>{
+      current = readNotifySettings(snap.exists() ? snap.data() : null);
+      paintSettings();
+      h.statusDot.classList.remove('offline');
+      h.statusText.textContent='Verbunden · Live-Synchronisierung aktiv';
+    },(err)=>{
+      console.error(err);
+      h.statusDot.classList.add('offline');
+      h.statusText.textContent=describeError(err);
+    }));
+
+    track(onSnapshot(PUSH_DOC(),(snap)=>{
+      const v = snap.exists() ? String((snap.data()||{}).vapidPublicKey||'') : '';
+      if(document.activeElement!==vapidInput) vapidInput.value = v;
+    },(err)=>console.error(err)));
+
+    track(onSnapshot(pushTokensRef,(snap)=>{
+      deviceList.innerHTML='';
+      if(snap.empty){
+        deviceList.appendChild(el('p',{class:'empty',
+          text:'Noch kein Gerät angemeldet – ohne das kommt keine Mitteilung an.'}));
+        return;
+      }
+      snap.docs.forEach(d=>{
+        const t = d.data()||{};
+        deviceList.appendChild(el('div',{class:'sf-file'},[
+          el('div',{class:'sf-file-name'},[
+            el('div',{text:t.label||'Gerät'}),
+            el('div',{class:'sf-file-size',text:'angemeldet '+fmtDate(t.createdAt)})
+          ]),
+          el('div',{class:'sf-file-actions'},[
+            el('button',{class:'row-btn del',type:'button',title:'Gerät abmelden',text:'✕',
+              style:'opacity:.85;',onclick:async()=>{
+                if(!confirm('„'+(t.label||'Gerät')+'“ abmelden? Dorthin kommen dann keine Mitteilungen mehr.')) return;
+                try{ await deleteDoc(doc(db,'pushTokens',d.id)); }
+                catch(err){ console.error(err); alert('Konnte nicht abgemeldet werden. '+describeError(err)); }
+              }})
+          ])
+        ]));
+      });
+    },(err)=>console.error(err)));
   }
 
   // ══════════════════════════════════════════════════════════
