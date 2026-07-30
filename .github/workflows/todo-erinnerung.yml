@@ -34,11 +34,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      # Das Skript braucht nur node:crypto und fetch – beides ist seit
+      # Node 18 dabei. 24 ist die Version, die GitHub aktuell ausliefert.
+      - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Erinnerung prüfen und gegebenenfalls senden
         env:
