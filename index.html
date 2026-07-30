@@ -165,6 +165,12 @@
 
   form.add-row{display:flex;gap:10px;margin-bottom:14px;align-items:flex-start;}
   form.add-row textarea{flex:1;min-height:52px;}
+  /* Eingabeformular der Projektansicht: Vorschlag, Notiz und Button
+     untereinander. Bewusst eine eigene Klasse – .add-row wird auch von den
+     To-dos und den App-Ideen benutzt und bleibt unangetastet. */
+  form.add-stack{display:flex;flex-direction:column;gap:10px;align-items:stretch;}
+  form.add-stack textarea{width:100%;min-height:52px;}
+  form.add-stack .btn{align-self:flex-start;}
 
   /* Home: project grid */
   .section-label{
@@ -787,6 +793,7 @@
     .home-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:11px;}
     form.add-row{flex-direction:column;}
     form.add-row .btn{width:100%;}
+    form.add-stack .btn{width:100%;align-self:stretch;}
     .cp-copy-head{width:44px;padding:0;}
     .cp-copy-head .cp-copy-txt{display:none;}
     .sp-form-actions .btn{width:100%;}
@@ -2654,11 +2661,13 @@
 
     // Eingabe: Verbesserung + optionale Notiz
     const textInput = el('textarea',{placeholder:'Neuer Verbesserungsvorschlag …',rows:'2',maxlength:'4000'});
-    const noteInput = el('textarea',{placeholder:'Optionale Notiz / Details (kann später bearbeitet werden) …',rows:'2',maxlength:'4000',style:'margin-top:10px;'});
+    const noteInput = el('textarea',{placeholder:'Optionale Notiz / Details (kann später bearbeitet werden) …',rows:'2',maxlength:'4000'});
     const addBtn = el('button',{class:'btn',text:'Eintragen'});
-    const addForm = el('form',{style:'margin-bottom:44px;'},[
-      el('div',{class:'add-row'},[textInput,addBtn]),
-      noteInput
+    // Reihenfolge: Vorschlag → Notiz → Button, alles untereinander (.add-stack)
+    const addForm = el('form',{class:'add-stack',style:'margin-bottom:44px;'},[
+      textInput,
+      noteInput,
+      addBtn
     ]);
     app.appendChild(addForm);
 
