@@ -12,6 +12,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="theme-color" content="#1b1d21">
+<!-- Installierbare App. iOS braucht dafür die apple-mobile-web-app-Angaben
+     oben, Android und Desktop-Chrome dieses Manifest. Die Farben darin
+     entsprechen --ink-bg; wird das Token geändert, dort mitändern. -->
+<link rel="manifest" href="manifest.json">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -781,6 +785,29 @@
     font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--paper-text-dim);text-align:center;
   }
 
+  /* Hinweis „Zum Home-Bildschirm“ – erscheint nur in iOS-Safari, solange die
+     App nicht installiert ist. Ohne Installation kann iOS keine
+     Benachrichtigungen zustellen. */
+  #ioshint{max-width:var(--wrap-max);margin:0 auto;padding:14px 18px 0;}
+  #ioshint:empty{display:none;}
+  .ios-hint{
+    display:flex;align-items:flex-start;gap:12px;
+    background:var(--ink-bg-raised);
+    border:1px solid var(--brass-dim);
+    border-radius:4px;
+    padding:14px 16px;
+    font-size:13px;line-height:1.55;
+    color:var(--paper-text-dim);
+  }
+  .ios-hint strong{color:var(--paper-text);}
+  .ios-hint .ios-hint-text{flex:1;min-width:0;}
+  .ios-hint button{
+    background:none;border:none;color:var(--paper-text-dim);
+    font-size:17px;line-height:1;cursor:pointer;
+    padding:6px 8px;margin:-6px -8px 0 0;border-radius:3px;flex-shrink:0;
+  }
+  .ios-hint button:active{background:var(--ink-bg);color:var(--paper-text);}
+
   .setup-banner{
     background:var(--ink-bg-raised);
     border:1px solid var(--brass-dim);
@@ -1006,6 +1033,7 @@
 <body>
 <nav id="mainnav"></nav>
 <div id="userbar"></div>
+<div id="ioshint"></div>
 <div class="wrap" id="app"></div>
 
 <script type="module">
@@ -1013,7 +1041,7 @@
   import {
     getFirestore, collection, addDoc, onSnapshot,
     doc, getDoc, setDoc, updateDoc, deleteDoc, getDocs,
-    serverTimestamp, query, orderBy, writeBatch
+    serverTimestamp, query, orderBy, where, writeBatch, getCountFromServer
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
   import {
     getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
@@ -1335,6 +1363,27 @@
     // Host als kleines Badge – nur wenn für das Projekt einer hinterlegt ist
     const hostTag = hostBadge(readHosting(p).host,{mini:true});
     if(hostTag) card.appendChild(hostTag);
+
+    // Offene Aufgaben zählen. Bewusst eine serverseitige Aggregation statt
+    // eines onSnapshot je Projekt: das wären dauerhaft offene Listener, die
+    // jedes Dokument einzeln lesen – diese Abfrage kostet einen Bruchteil.
+    // Aktuell genug, weil der Router die Startseite ohnehin neu zeichnet.
+    // entriesRefFor() ist Pflicht, sonst zählt das Legacy-Projekt falsch.
+    const count = el('p',{class:'card-count',text:'…'});   // Platzhalter statt 0,
+    card.appendChild(count);                               // sonst blitzt eine falsche Zahl auf
+    getCountFromServer(query(entriesRefFor(p), where('done','==',false)))
+      .then(snap=>{
+        if(!count.isConnected) return;      // Ansicht inzwischen gewechselt
+        const n = snap.data().count;
+        count.textContent = n===0 ? 'Keine offenen Aufgaben'
+                          : (n===1 ? '1 offene Aufgabe übrig'
+                                   : n+' offene Aufgaben übrig');
+      })
+      .catch(err=>{
+        // Ein Zähler ist nicht kritisch – die Karte bleibt ohne ihn nutzbar.
+        console.error(err);
+        if(count.isConnected) count.textContent='';
+      });
 
     const controls = el('div',{class:'card-controls'});
     controls.appendChild(el('button',{class:'ctrl-btn',title:'Nach oben',text:'▲',
@@ -3691,6 +3740,33 @@
         || window.matchMedia('(display-mode: standalone)').matches;
   }
 
+  // Ohne Installation kann iOS keine Benachrichtigungen zustellen – deshalb
+  // ein Hinweis ausserhalb der Einstellungen, damit man ihn auch findet,
+  // bevor man dort landet. Einmal je Sitzung: „display-mode: standalone“
+  // ändert sich ohne Neuladen nicht, einmaliges Zeichnen genügt also.
+  function paintIosHint(){
+    const box = document.getElementById('ioshint');
+    if(!box) return;
+    box.innerHTML='';
+    if(!isIos() || isStandalone()) return;
+    try{ if(sessionStorage.getItem('ioshint-zu')==='1') return; }catch(e){}
+
+    const zu = el('button',{type:'button',title:'Hinweis ausblenden',
+      'aria-label':'Hinweis ausblenden',text:'✕'});
+    zu.addEventListener('click',()=>{
+      box.innerHTML='';
+      try{ sessionStorage.setItem('ioshint-zu','1'); }catch(e){}
+    });
+    box.appendChild(el('div',{class:'ios-hint'},[
+      el('div',{class:'ios-hint-text'},[
+        el('strong',{text:'Für Mitteilungen zum Home-Bildschirm hinzufügen. '}),
+        el('span',{text:'Unten auf „Teilen“ tippen, dann „Zum Home-Bildschirm“. '+
+          'Im Safari-Tab kann iOS keine Benachrichtigungen zustellen.'})
+      ]),
+      zu
+    ]));
+  }
+
   // Meldet dieses Gerät an. Wirft mit verständlichem Text, wo es hakt.
   async function enablePushOnThisDevice(onStep){
     const step = (m)=>{ if(onStep) onStep(m); };
@@ -3768,6 +3844,7 @@
     const saveBtn    = el('button',{class:'btn',type:'button',text:'Speichern'});
     const saveStatus = el('p',{class:'hg-status',style:'display:none;'});
     let current = defaultNotifySettings();
+    let deviceCount = 0;      // wird vom pushTokens-Listener weiter unten gesetzt
 
     function paintSettings(){
       enabledBox.checked = current.enabled;
@@ -3780,6 +3857,32 @@
       saveBtn.disabled=true;
       saveStatus.style.display=''; saveStatus.className='hg-status';
       saveStatus.textContent='Wird gespeichert …';
+
+      // Einschalten nur, wenn die Mitteilung auch ankommen kann. Die
+      // Erlaubnis wird bewusst erst hier abgefragt – nicht beim Laden der
+      // Seite. Klappt es nicht, bleibt die Erinnerung ausgeschaltet, statt
+      // stumm als „an“ gespeichert zu werden.
+      if(enabledBox.checked){
+        const bereit = ('Notification' in window)
+          && Notification.permission==='granted' && deviceCount>0;
+        if(!bereit){
+          try{
+            await enablePushOnThisDevice((m)=>{ saveStatus.textContent=m; });
+          }catch(err){
+            console.error(err);
+            enabledBox.checked = false;
+            try{
+              await setDoc(NOTIFY_DOC(),{enabled:false,updatedAt:serverTimestamp()},{merge:true});
+            }catch(e){ console.error(e); }
+            saveStatus.className='hg-status err';
+            saveStatus.textContent = (err && err.message ? err.message : describeError(err))+
+              ' Die Erinnerung bleibt deshalb ausgeschaltet.';
+            saveBtn.disabled=false;
+            return;
+          }
+        }
+      }
+
       let tz = current.timezone;
       try{ tz = Intl.DateTimeFormat().resolvedOptions().timeZone || tz; }catch(e){}
       try{
@@ -3908,6 +4011,7 @@
     },(err)=>console.error(err)));
 
     track(onSnapshot(pushTokensRef,(snap)=>{
+      deviceCount = snap.size;
       deviceList.innerHTML='';
       if(snap.empty){
         deviceList.appendChild(el('p',{class:'empty',
@@ -4312,6 +4416,9 @@
   // ══════════════════════════════════════════════════════════
   //  START · erst nach erfolgreicher Anmeldung in die App
   // ══════════════════════════════════════════════════════════
+  // Hängt nicht an der Anmeldung: der Hinweis gilt auch auf dem Anmeldeschirm.
+  paintIosHint();
+
   onAuthStateChanged(auth,(user)=>{
     signedIn = !!user;
     if(user){

@@ -40,6 +40,9 @@ messaging.onBackgroundMessage((payload) => {
   // sich zu stapeln, wenn die App ein paar Tage nicht geöffnet wurde.
   self.registration.showNotification(d.title || 'Verbesserungsprotokoll', {
     body: d.body || 'Schau in deine offenen To-dos.',
+    // Relativ zum Geltungsbereich des Workers – funktioniert unter
+    // github.io/Verbesserungsprotokoll/ genauso wie unter eigener Domain.
+    icon: './icon-192.png',
     tag: 'todo-erinnerung',
     renotify: true,
     data: { url: d.url || ZIEL }
