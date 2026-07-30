@@ -3643,6 +3643,16 @@
   const NOTIFY_DOC = ()=>doc(db,'settings','notifications');
   const PUSH_DOC   = ()=>doc(db,'settings','push');
 
+  // Öffentlicher Teil des Web-Push-Zertifikats (Firebase Console →
+  // Projekteinstellungen → Cloud Messaging → Web Push certificates).
+  // Er ist wie der apiKey öffentlich und KEIN Geheimnis: damit meldet sich
+  // nur das Gerät beim Push-Dienst an. Abgesichert ist der Versand über den
+  // privaten Dienstkonto-Schlüssel im GitHub-Secret.
+  // Ein in settings/push hinterlegter Wert hat Vorrang – so lässt sich der
+  // Schlüssel bei Bedarf ohne Code-Änderung austauschen.
+  const DEFAULT_VAPID_PUBLIC_KEY =
+    'BLJEpi37pB3FIAucj_NB5lGk5AzkNLvcv-UZivRUpRAs3t5j3jjNWp0wj-CCEEtGihTFT2h9dk0NtSjzzghHIrA';
+
   function defaultNotifySettings(){
     let tz = 'Europe/Zurich';
     try{ tz = Intl.DateTimeFormat().resolvedOptions().timeZone || tz; }catch(e){}
@@ -3693,11 +3703,17 @@
     }
 
     step('Web-Push-Zertifikat wird gelesen …');
-    let vapid = '';
+    // Ein in settings/push hinterlegter Schlüssel hat Vorrang, sonst gilt
+    // der fest eingetragene. Ist settings/push nicht lesbar, ist das kein
+    // Grund abzubrechen – dann zählt einfach der Standardschlüssel.
+    let vapid = DEFAULT_VAPID_PUBLIC_KEY;
     try{
       const snap = await getDoc(PUSH_DOC());
-      if(snap.exists()) vapid = String((snap.data()||{}).vapidPublicKey || '').trim();
-    }catch(err){ throw new Error(describeError(err)); }
+      if(snap.exists()){
+        const eigener = String((snap.data()||{}).vapidPublicKey || '').trim();
+        if(eigener) vapid = eigener;
+      }
+    }catch(err){ console.warn('settings/push nicht lesbar:',err); }
     if(!vapid){
       throw new Error('Es fehlt noch das Web-Push-Zertifikat. Unten unter „Technische Einrichtung“ '+
         'den öffentlichen Schlüssel aus der Firebase Console eintragen.');
@@ -3858,11 +3874,15 @@
 
     app.appendChild(el('details',{class:'hg-json'},[
       el('summary',{text:'Technische Einrichtung'}),
+      el('p',{class:'hg-hint',text:'Hier ist nichts zu tun – das Web-Push-Zertifikat steckt bereits '+
+        'im Code. Dieses Feld ist nur dafür da, den Schlüssel auszutauschen, falls er in der '+
+        'Firebase Console jemals neu erzeugt wird. Dann hier eintragen, statt den Code zu ändern.'}),
       el('ol',{class:'gh-steps',html:
         '<li>Firebase Console → <strong>Projekteinstellungen → Cloud Messaging</strong> öffnen.</li>'+
         '<li>Unter <strong>Web Push certificates</strong> ein Schlüsselpaar erzeugen.</li>'+
         '<li>Den angezeigten <strong>öffentlichen Schlüssel</strong> hier einfügen und speichern. '+
-        'Er ist nicht geheim – der Versand wird über den GitHub-Secret abgesichert.</li>'}),
+        'Er ist nicht geheim – abgesichert wird der Versand über den privaten Schlüssel im '+
+        'GitHub-Secret.</li>'}),
       el('div',{class:'field'},[el('label',{text:'Web-Push-Zertifikat (öffentlicher Schlüssel)'}),vapidInput]),
       el('div',{},[vapidBtn]),
       vapidMsg
