@@ -1041,7 +1041,7 @@
   import {
     getFirestore, collection, addDoc, onSnapshot,
     doc, getDoc, setDoc, updateDoc, deleteDoc, getDocs,
-    serverTimestamp, query, orderBy, writeBatch
+    serverTimestamp, query, orderBy, where, writeBatch, getCountFromServer
   } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
   import {
     getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
@@ -1363,6 +1363,27 @@
     // Host als kleines Badge – nur wenn für das Projekt einer hinterlegt ist
     const hostTag = hostBadge(readHosting(p).host,{mini:true});
     if(hostTag) card.appendChild(hostTag);
+
+    // Offene Aufgaben zählen. Bewusst eine serverseitige Aggregation statt
+    // eines onSnapshot je Projekt: das wären dauerhaft offene Listener, die
+    // jedes Dokument einzeln lesen – diese Abfrage kostet einen Bruchteil.
+    // Aktuell genug, weil der Router die Startseite ohnehin neu zeichnet.
+    // entriesRefFor() ist Pflicht, sonst zählt das Legacy-Projekt falsch.
+    const count = el('p',{class:'card-count',text:'…'});   // Platzhalter statt 0,
+    card.appendChild(count);                               // sonst blitzt eine falsche Zahl auf
+    getCountFromServer(query(entriesRefFor(p), where('done','==',false)))
+      .then(snap=>{
+        if(!count.isConnected) return;      // Ansicht inzwischen gewechselt
+        const n = snap.data().count;
+        count.textContent = n===0 ? 'Keine offenen Aufgaben'
+                          : (n===1 ? '1 offene Aufgabe übrig'
+                                   : n+' offene Aufgaben übrig');
+      })
+      .catch(err=>{
+        // Ein Zähler ist nicht kritisch – die Karte bleibt ohne ihn nutzbar.
+        console.error(err);
+        if(count.isConnected) count.textContent='';
+      });
 
     const controls = el('div',{class:'card-controls'});
     controls.appendChild(el('button',{class:'ctrl-btn',title:'Nach oben',text:'▲',
