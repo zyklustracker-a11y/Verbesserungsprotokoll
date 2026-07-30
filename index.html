@@ -119,7 +119,7 @@
   .back-link:hover{color:var(--brass);}
 
   /* Buttons */
-  input[type=text],textarea{
+  input[type=text],input[type=password],textarea{
     background:var(--ink-bg-raised);
     border:1px solid var(--hairline);
     color:var(--paper-text);
@@ -136,8 +136,8 @@
     touch-action:manipulation;
   }
   textarea{resize:vertical;line-height:1.5;min-height:52px;}
-  input[type=text]::placeholder,textarea::placeholder{color:var(--paper-text-dim);}
-  input[type=text]:focus,textarea:focus{border-color:var(--brass-dim);}
+  input[type=text]::placeholder,input[type=password]::placeholder,textarea::placeholder{color:var(--paper-text-dim);}
+  input[type=text]:focus,input[type=password]:focus,textarea:focus{border-color:var(--brass-dim);}
 
   button.btn{
     background:var(--brass);
@@ -556,6 +556,52 @@
   .hg-json summary:hover{color:var(--paper-text);}
   .hg-json textarea{font-family:'IBM Plex Mono',monospace;font-size:13px;min-height:120px;}
 
+  /* Repo-Auswahl: scrollbare Liste mit grossen Tap-Zeilen */
+  .rp-filter{margin-bottom:10px;}
+  .rp-list{
+    max-height:44vh;overflow-y:auto;
+    border:1px solid var(--hairline);border-radius:4px;
+    background:var(--ink-bg);
+  }
+  .rp-row{
+    display:flex;align-items:center;gap:10px;
+    width:100%;text-align:left;
+    background:none;border:none;border-bottom:1px solid var(--hairline);
+    color:var(--paper-text);font-family:'Inter',sans-serif;font-size:14.5px;
+    padding:14px 15px;min-height:52px;cursor:pointer;
+    transition:background .12s ease;
+  }
+  .rp-row:last-child{border-bottom:none;}
+  .rp-row:active{background:var(--ink-bg-raised2);}
+  @media (hover:hover) and (pointer:fine){
+    .rp-row:hover{background:var(--ink-bg-raised);}
+  }
+  .rp-name{flex:1;min-width:0;word-break:break-word;}
+  .rp-tag{
+    font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--paper-text-dim);
+    border:1px solid var(--hairline);border-radius:3px;padding:3px 7px;
+    flex-shrink:0;white-space:nowrap;
+  }
+  .rp-tag.privat{color:var(--brass);border-color:var(--brass-dim);}
+  .rp-tag.hat{color:var(--sage);border-color:var(--sage-dim);}
+
+  /* Token-Dialog */
+  .gh-steps{font-size:13px;line-height:1.65;color:var(--paper-text-dim);margin:0 0 20px;padding-left:20px;}
+  .gh-steps li{margin-bottom:7px;}
+  .gh-steps strong{color:var(--paper-text);}
+  .gh-steps code{
+    background:var(--ink-bg);padding:1px 6px;border-radius:3px;
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--brass);
+  }
+  .gh-state{
+    display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+    font-size:13px;margin-bottom:18px;
+  }
+  /* Startseite: GitHub-Bereich */
+  .gh-home{margin-bottom:48px;}
+  .gh-home .rp-list{max-height:none;}
+
   /* Konzept / Prompt: Popup */
   .modal.wide{max-width:680px;}
   .modal.wide .modal-actions{flex-wrap:wrap;}
@@ -898,8 +944,15 @@
   let openEntriesRepaint = ()=>{};             // zeichnet den Bereich neu (optimistisches UI)
   let openEntriesQueue   = Promise.resolve();  // serialisiert Firestore-Updates (kein Race bei Schnellklicks)
 
+  // Zeichnet den GitHub-Bereich der Startseite neu. Wird auch aufgerufen, wenn
+  // der Token erst nach dem ersten Rendern geladen ist.
+  let githubHomeRepaint = ()=>{};
+
   function track(fn){ if(fn) unsubs.push(fn); }
-  function cleanup(){ unsubs.forEach(fn=>{ try{fn();}catch(e){} }); unsubs=[]; }
+  function cleanup(){
+    unsubs.forEach(fn=>{ try{fn();}catch(e){} }); unsubs=[];
+    githubHomeRepaint = ()=>{};   // gehört zur alten Ansicht
+  }
 
   function router(){
     cleanup();
@@ -935,6 +988,12 @@
       el('button',{class:'btn',text:'+ Neues Projekt', onclick:()=>openProjectModal(null)})
     ]));
     app.appendChild(grid);
+
+    // GitHub-Bereich: Repos, für die es noch kein Projekt gibt
+    const ghSection = el('div',{class:'gh-home'});
+    app.appendChild(ghSection);
+    githubHomeRepaint = ()=>renderGithubHome(ghSection);
+    githubHomeRepaint();
 
     // To-do Bereich
     const todosWrap = el('div');
@@ -1024,6 +1083,8 @@
         grid.appendChild(el('p',{class:'empty',text:'Noch keine Projekte – lege oben dein erstes an.'}));
       }
       projectsCache.forEach((p,i)=> grid.appendChild(buildProjectCard(p,i,projectsCache.length)));
+      // Erst mit den Projekten steht fest, welche Repos noch keins haben
+      githubHomeRepaint();
       statusDot.classList.remove('offline');
       statusText.textContent='Verbunden · Live-Synchronisierung aktiv';
     },(err)=>{
@@ -1247,22 +1308,108 @@
     return {owner,repo};
   }
 
+  // ── GitHub-Token ──────────────────────────────────────────
+  // Optional. Ohne Token funktioniert alles wie bisher, nur eben ausschliesslich
+  // mit öffentlichen Repos und 60 Abfragen pro Stunde. Mit Token kommen private
+  // Repos, die Repo-Auswahlliste und 5000 Abfragen pro Stunde dazu.
+  //
+  // Ablage: settings/github. Bewusst eine eigene Collection, weil backup.html
+  // nur projects/appIdeas/todos/verbesserungsprotokoll sichert – so landet der
+  // Token nicht in heruntergeladenen Backup-Dateien.
+  const GITHUB_SETTINGS_DOC = ['settings','github'];
+  let githubToken = '';       // im Speicher, solange die Seite offen ist
+  let githubLogin = '';       // Konto-Name laut Token, nur zur Anzeige
+
+  function githubSettingsRef(){ return doc(db,GITHUB_SETTINGS_DOC[0],GITHUB_SETTINGS_DOC[1]); }
+
+  // Beim Start einmal laden. Fehler sind hier unkritisch: dann bleibt die App
+  // im Zustand „kein Token“ und meldet das erst, wenn es jemand braucht.
+  async function loadGithubToken(){
+    try{
+      const snap = await getDoc(githubSettingsRef());
+      if(snap.exists()){
+        const d = snap.data() || {};
+        githubToken = typeof d.token==='string' ? d.token.trim() : '';
+        githubLogin = typeof d.login==='string' ? d.login.trim() : '';
+      }
+    }catch(err){
+      // Fehlt der Rules-Block für settings, landet man genau hier.
+      console.warn('GitHub-Einstellungen nicht lesbar:',err);
+    }
+  }
+
+  async function saveGithubToken(token,login){
+    await setDoc(githubSettingsRef(),{
+      token:token, login:login||'', updatedAt:serverTimestamp()
+    });
+    githubToken = token; githubLogin = login||'';
+  }
+  async function clearGithubToken(){
+    await setDoc(githubSettingsRef(),{token:'', login:'', updatedAt:serverTimestamp()});
+    githubToken=''; githubLogin='';
+  }
+  function hasGithubToken(){ return !!githubToken; }
+
   // ── GitHub-API ────────────────────────────────────────────
   // Fehler werden hier schon in verständliche deutsche Sätze übersetzt,
-  // damit der Dialog sie nur noch anzeigen muss.
-  async function githubGet(url){
+  // damit die Dialoge sie nur noch anzeigen müssen.
+  // token: '' erzwingt einen Aufruf ohne Anmeldung, undefined nimmt den
+  // gespeicherten Token (falls vorhanden).
+  async function githubGet(url,token){
+    const auth = (token===undefined) ? githubToken : token;
+    const headers = {'Accept':'application/vnd.github+json'};
+    if(auth) headers['Authorization'] = 'Bearer '+auth;
     let res;
     try{
-      res = await fetch(url,{headers:{'Accept':'application/vnd.github+json'}});
+      res = await fetch(url,{headers});
     }catch(err){
       throw new Error('Keine Verbindung zu GitHub – Internetverbindung prüfen und noch einmal versuchen.');
     }
-    if(res.status===404) throw new Error('Repo nicht gefunden oder privat.');
+    if(res.status===401)
+      throw new Error('Der GitHub-Token wird nicht akzeptiert – er ist ungültig, abgelaufen oder widerrufen.');
+    if(res.status===404)
+      throw new Error(auth
+        ? 'Repo nicht gefunden – Name prüfen. Liegt es in einem anderen Konto oder deckt der Token es nicht ab, fehlt dem Token der Zugriff.'
+        : 'Repo nicht gefunden oder privat.');
     if(res.status===403 || res.status===429)
-      throw new Error('GitHub-Limit erreicht (60 Abfragen pro Stunde), bitte später nochmal.');
+      throw new Error(auth
+        ? 'GitHub-Limit erreicht (5000 Abfragen pro Stunde), bitte später nochmal.'
+        : 'GitHub-Limit erreicht (60 Abfragen pro Stunde), bitte später nochmal.');
     if(!res.ok) throw new Error('GitHub antwortet mit Fehler '+res.status+' – bitte später nochmal versuchen.');
     try{ return await res.json(); }
     catch(err){ throw new Error('Die Antwort von GitHub war unlesbar – bitte später nochmal versuchen.'); }
+  }
+
+  // Prüft einen Token und liefert den Konto-Namen zurück.
+  async function verifyGithubToken(token){
+    const me = await githubGet('https://api.github.com/user',token);
+    const login = (me && typeof me.login==='string') ? me.login : '';
+    if(!login) throw new Error('GitHub hat keinen Konto-Namen zurückgegeben – Token bitte prüfen.');
+    return login;
+  }
+
+  // Eigene Repos, neueste Änderung zuerst. Braucht einen Token, weil ohne
+  // Anmeldung keine privaten Repos sichtbar sind.
+  async function fetchMyRepos(){
+    if(!hasGithubToken()) throw new Error('Dafür wird ein GitHub-Token benötigt.');
+    const out = [];
+    // Bis zu drei Seiten – 300 Repos sind für den Zweck reichlich.
+    for(let page=1; page<=3; page++){
+      const list = await githubGet('https://api.github.com/user/repos'+
+        '?per_page=100&sort=pushed&affiliation=owner&page='+page);
+      if(!Array.isArray(list) || list.length===0) break;
+      list.forEach(r=>{
+        if(!r || typeof r.full_name!=='string') return;
+        out.push({
+          fullName:r.full_name,
+          name:typeof r.name==='string' ? r.name : r.full_name,
+          isPrivate:r.private===true,
+          htmlUrl:typeof r.html_url==='string' ? r.html_url : ''
+        });
+      });
+      if(list.length<100) break;
+    }
+    return out;
   }
 
   async function detectHosting(owner,repo){
@@ -1319,6 +1466,140 @@
 
     result.deployNote = notes.join(' · ');
     return result;
+  }
+
+  // ── Dialog: GitHub-Token verbinden ────────────────────────
+  function openGithubTokenModal(onDone){
+    const tokenInput = el('input',{type:'password',placeholder:'github_pat_… hier einfügen',
+      autocapitalize:'off',autocorrect:'off',spellcheck:'false',autocomplete:'off'});
+    const status = el('p',{class:'hg-status',text:'Der Token wird vor dem Speichern bei GitHub geprüft.'});
+    const saveBtn = el('button',{class:'btn',type:'button',text:'Prüfen und speichern'});
+
+    function setStatus(msg,kind){
+      status.className='hg-status'+(kind?' '+kind:'');
+      status.textContent=msg;
+    }
+
+    const stateLine = el('div',{class:'gh-state'});
+    function paintState(){
+      stateLine.innerHTML='';
+      if(hasGithubToken()){
+        stateLine.appendChild(el('span',{class:'host-badge vps',text:'verbunden'}));
+        stateLine.appendChild(el('span',{class:'hg-sub',style:'margin:0;',
+          text:githubLogin ? ('als '+githubLogin) : ''}));
+      }else{
+        stateLine.appendChild(el('span',{class:'host-badge neutral',text:'nicht verbunden'}));
+      }
+    }
+    paintState();
+
+    const overlay = el('div',{class:'modal-overlay'});
+    overlay.addEventListener('click',(e)=>{ if(e.target===overlay) overlay.remove(); });
+
+    const removeBtn = el('button',{class:'btn ghost',type:'button',text:'Token entfernen'});
+    removeBtn.addEventListener('click',async()=>{
+      if(!confirm('GitHub-Token entfernen? Private Repos und die Repo-Liste stehen danach nicht mehr zur Verfügung.')) return;
+      removeBtn.disabled=true;
+      try{
+        await clearGithubToken();
+        paintState();
+        setStatus('Token entfernt. Öffentliche Repos werden weiterhin erkannt.','ok');
+        if(typeof onDone==='function') onDone();
+      }catch(err){
+        console.error(err); setStatus(describeError(err),'err');
+      }
+      removeBtn.disabled=false;
+    });
+
+    async function save(){
+      const token = tokenInput.value.trim();
+      if(!token){ setStatus('Bitte den Token einfügen.','err'); tokenInput.focus(); return; }
+      saveBtn.disabled=true;
+      setStatus('Token wird bei GitHub geprüft …');
+      let login;
+      try{
+        login = await verifyGithubToken(token);
+      }catch(err){
+        console.error(err); setStatus(err.message,'err'); saveBtn.disabled=false; return;
+      }
+      try{
+        await saveGithubToken(token,login);
+        tokenInput.value='';
+        paintState();
+        setStatus('Verbunden als '+login+'. Deine Repos stehen jetzt als Liste bereit.','ok');
+        if(typeof onDone==='function') onDone();
+      }catch(err){
+        console.error(err);
+        // Häufigster Fall: der settings-Block fehlt noch in den Firestore-Regeln.
+        setStatus(describeError(err)+' Fehlt in den Firestore-Regeln der Block für „settings“, '+
+                  'muss er in der Firebase Console noch eingespielt werden.','err');
+      }
+      saveBtn.disabled=false;
+    }
+    saveBtn.addEventListener('click',save);
+    tokenInput.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); save(); }});
+
+    const modal = el('div',{class:'modal wide'},[
+      el('h2',{text:'GitHub verbinden'}),
+      stateLine,
+      el('p',{class:'hg-hint',text:'Mit einem Token erkennt die App auch private Repos, '+
+        'zeigt deine Repos als Auswahlliste und darf 5000 statt 60 Abfragen pro Stunde machen. '+
+        'Der Token ist kostenlos und braucht keine Zahlungsdaten.'}),
+      el('ol',{class:'gh-steps',html:
+        '<li><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Diese GitHub-Seite öffnen</a> (Fine-grained token).</li>'+
+        '<li>Namen vergeben, z. B. <code>Verbesserungsprotokoll</code>, und eine Laufzeit wählen.</li>'+
+        '<li>Bei <strong>Repository access</strong>: <code>All repositories</code>.</li>'+
+        '<li>Bei <strong>Permissions → Repository permissions</strong> genau zwei auf <code>Read-only</code> setzen: '+
+        '<strong>Metadata</strong> und <strong>Contents</strong>. Sonst nichts – Schreibrechte braucht die App nicht.</li>'+
+        '<li>Token erzeugen, kopieren und unten einfügen. GitHub zeigt ihn nur einmal.</li>'}),
+      el('div',{class:'field'},[
+        el('label',{text:'Token'}),
+        tokenInput,
+        el('p',{class:'hg-sub',text:'Wird in deiner Datenbank gespeichert und ist nur für dein Konto lesbar. '+
+          'In heruntergeladenen Backups ist er nicht enthalten. Bei GitHub kannst du ihn jederzeit widerrufen.'})
+      ]),
+      status,
+      el('div',{class:'modal-actions'},[
+        el('button',{class:'btn ghost',type:'button',text:'Schliessen',onclick:()=>overlay.remove()}),
+        hasGithubToken() ? removeBtn : null,
+        saveBtn
+      ].filter(Boolean))
+    ]);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    tokenInput.focus();
+  }
+
+  // ── Repo-Auswahlliste ─────────────────────────────────────
+  // Baut eine gefilterte, scrollbare Liste. onPick(repo) beim Antippen.
+  // markFn(repo) darf optional einen Hinweistext für die rechte Seite liefern.
+  function buildRepoPicker(repos,onPick,markFn){
+    const filter = el('input',{class:'rp-filter',type:'text',placeholder:'Suchen …',
+      autocapitalize:'off',autocorrect:'off',spellcheck:'false'});
+    const list = el('div',{class:'rp-list'});
+    const count = el('p',{class:'hg-sub',text:''});
+
+    function paint(){
+      const q = filter.value.trim().toLowerCase();
+      const shown = repos.filter(r=> !q || r.fullName.toLowerCase().includes(q));
+      list.innerHTML='';
+      if(shown.length===0){
+        list.appendChild(el('p',{class:'empty',style:'padding:18px 15px;',text:'Kein Repo gefunden.'}));
+      }else{
+        shown.forEach(r=>{
+          const tags = [];
+          if(r.isPrivate) tags.push(el('span',{class:'rp-tag privat',text:'privat'}));
+          const mark = markFn ? markFn(r) : '';
+          if(mark) tags.push(el('span',{class:'rp-tag hat',text:mark}));
+          list.appendChild(el('button',{class:'rp-row',type:'button',
+            onclick:()=>onPick(r)},[el('span',{class:'rp-name',text:r.name})].concat(tags)));
+        });
+      }
+      count.textContent = shown.length+' von '+repos.length+' Repos';
+    }
+    filter.addEventListener('input',paint);
+    paint();
+    return el('div',{},[filter,list,count]);
   }
 
   // ── JSON-Fallback ─────────────────────────────────────────
@@ -1431,6 +1712,46 @@
     detectBtn.addEventListener('click',runDetect);
     repoInput.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); runDetect(); }});
 
+    // Repo-Auswahlliste: erspart das Tippen ganz und zeigt auch private Repos.
+    const pickerBox = el('div',{style:'margin-top:12px;'});
+    const pickBtn = el('button',{class:'pill-btn host-link',type:'button',text:'Aus meinen Repos wählen'});
+    let pickerOpen = false;
+
+    function closePicker(){ pickerOpen=false; pickerBox.innerHTML=''; pickBtn.textContent='Aus meinen Repos wählen'; }
+
+    async function togglePicker(){
+      if(pickerOpen){ closePicker(); return; }
+      if(!hasGithubToken()){
+        // Ohne Token gibt es keine Liste – direkt in den Verbinden-Dialog.
+        openGithubTokenModal(()=>{ if(hasGithubToken()) togglePicker(); });
+        return;
+      }
+      pickerOpen = true;
+      pickBtn.textContent = 'Liste schliessen';
+      pickerBox.innerHTML='';
+      pickerBox.appendChild(el('p',{class:'hg-sub',text:'Repos werden geladen …'}));
+      try{
+        const repos = await fetchMyRepos();
+        if(!pickerOpen) return;                   // zwischenzeitlich geschlossen
+        pickerBox.innerHTML='';
+        if(repos.length===0){
+          pickerBox.appendChild(el('p',{class:'hg-sub',text:'Der Token sieht keine Repos. Deckt er auch „All repositories“ ab?'}));
+          return;
+        }
+        pickerBox.appendChild(buildRepoPicker(repos,(r)=>{
+          repoInput.value = r.fullName;
+          closePicker();
+          runDetect();
+        }));
+      }catch(err){
+        console.error(err);
+        if(!pickerOpen) return;
+        pickerBox.innerHTML='';
+        pickerBox.appendChild(el('p',{class:'hg-status err',text:err.message}));
+      }
+    }
+    pickBtn.addEventListener('click',togglePicker);
+
     // JSON-Fallback (eingeklappt)
     const jsonArea = el('textarea',{placeholder:'JSON-Block hier einfügen – Text oder ```-Zeilen drumherum sind egal.',rows:'6'});
     const jsonBtn  = el('button',{class:'btn small ghost',type:'button',text:'JSON übernehmen'});
@@ -1466,7 +1787,14 @@
         el('div',{class:'hg-detect-row'},[repoInput,detectBtn]),
         el('p',{class:'hg-sub',text: GITHUB_OWNER
           ? ('Der Repo-Name genügt – „'+GITHUB_OWNER+'/“ wird ergänzt. Eine vollständige URL geht auch.')
-          : 'Möglich sind owner/repo oder eine vollständige GitHub-URL.'})
+          : 'Möglich sind owner/repo oder eine vollständige GitHub-URL.'}),
+        el('div',{style:'margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;'},[
+          pickBtn,
+          el('button',{class:'pill-btn host-link',type:'button',
+            text: hasGithubToken() ? 'GitHub-Token ändern' : 'GitHub verbinden',
+            onclick:()=>openGithubTokenModal(()=>{ closePicker(); })})
+        ]),
+        pickerBox
       ]),
       status,
       el('div',{class:'hg-section'},[
@@ -1508,6 +1836,111 @@
       }
     }
     saveBtn.addEventListener('click',save);
+  }
+
+  // ── Startseite: Repos ohne Projekt ────────────────────────
+  let myReposCache = null;      // einmal pro Sitzung laden, spart Abfragen
+
+  async function getMyRepos(force){
+    if(!force && myReposCache) return myReposCache;
+    myReposCache = await fetchMyRepos();
+    return myReposCache;
+  }
+
+  // „owner/repo“ aller Projekte, die schon ein Repo hinterlegt haben
+  function linkedRepoKeys(){
+    const keys = new Set();
+    projectsCache.forEach(p=>{
+      const url = readHosting(p).repoUrl;
+      if(!url) return;
+      const parsed = parseRepoInput(url);
+      if(parsed) keys.add((parsed.owner+'/'+parsed.repo).toLowerCase());
+    });
+    return keys;
+  }
+
+  // Legt aus einem Repo direkt ein Projekt an und erkennt das Hosting mit.
+  // Das Projekt wird zuerst geschrieben, damit es auch dann existiert, wenn
+  // die GitHub-Abfrage danach scheitert.
+  async function createProjectFromRepo(repo){
+    const parsed = parseRepoInput(repo.fullName);
+    if(!parsed){ alert('Der Repo-Name konnte nicht gelesen werden.'); githubHomeRepaint(); return; }
+    try{
+      const maxOrder = projectsCache.reduce((m,p)=>Math.max(m,p.order??0),0);
+      const ref = await addDoc(projectsRef,{
+        name:repo.name,
+        color:COLORS[projectsCache.length % COLORS.length],
+        icon:'🌐',
+        order:maxOrder+1,
+        createdAt:serverTimestamp()
+      });
+      let hosting;
+      try{
+        hosting = await detectHosting(parsed.owner,parsed.repo);
+      }catch(err){
+        console.error(err);
+        hosting = { host:'', liveUrl:'',
+          repoUrl: repo.htmlUrl || ('https://github.com/'+repo.fullName),
+          dashboardUrl:'',
+          deployNote:'Hosting konnte nicht abgefragt werden: '+err.message };
+      }
+      HOSTING_FIELDS.forEach(k=>{ hosting[k] = String(hosting[k]||'').trim(); });
+      ['liveUrl','repoUrl','dashboardUrl'].forEach(k=>{ hosting[k] = normalizeUrl(hosting[k]); });
+      await updateDoc(doc(db,'projects',ref.id),{
+        hosting: Object.assign({},hosting,{updatedAt:serverTimestamp()})
+      });
+    }catch(err){
+      console.error(err);
+      alert('Projekt konnte nicht angelegt werden. '+describeError(err));
+    }
+    githubHomeRepaint();
+  }
+
+  function renderGithubHome(box){
+    const head = el('div',{style:'display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;'},[
+      el('p',{class:'section-label',text:'🔗 GitHub',style:'margin:0;'}),
+      el('button',{class:'pill-btn host-link',type:'button',
+        text: hasGithubToken() ? 'Token ändern' : 'Verbinden',
+        onclick:()=>openGithubTokenModal(()=>{ myReposCache=null; githubHomeRepaint(); })})
+    ]);
+    function reset(){ box.innerHTML=''; box.appendChild(head); }
+    reset();
+
+    if(!hasGithubToken()){
+      box.appendChild(el('p',{class:'hg-sub',style:'margin:0;',
+        text:'Verbunden erkennt die App auch private Repos, zeigt deine Repos als Auswahlliste '+
+             'und schlägt hier Repos vor, für die noch kein Projekt existiert.'}));
+      return;
+    }
+
+    box.appendChild(el('p',{class:'hg-sub',style:'margin:0;',text:'Repos werden geladen …'}));
+
+    getMyRepos().then(repos=>{
+      if(!box.isConnected) return;              // Ansicht inzwischen gewechselt
+      const linked = linkedRepoKeys();
+      const missing = repos.filter(r=> !linked.has(r.fullName.toLowerCase()));
+      reset();
+      if(missing.length===0){
+        box.appendChild(el('p',{class:'hg-sub',style:'margin:0;',
+          text:'Für alle '+repos.length+' Repos existiert schon ein Projekt.'}));
+        return;
+      }
+      box.appendChild(el('p',{class:'hg-sub',style:'margin:0 0 12px;',
+        text:(missing.length===1 ? '1 Repo hat noch kein Projekt'
+                                 : missing.length+' Repos haben noch kein Projekt')+
+             ' – antippen legt eines an und erkennt das Hosting gleich mit.'}));
+      box.appendChild(buildRepoPicker(missing,(r)=>{
+        reset();
+        box.appendChild(el('p',{class:'hg-sub',style:'margin:0;',
+          text:'„'+r.name+'“ wird angelegt und bei GitHub geprüft …'}));
+        createProjectFromRepo(r);
+      }));
+    }).catch(err=>{
+      console.error(err);
+      if(!box.isConnected) return;
+      reset();
+      box.appendChild(el('p',{class:'hg-status err',text:err.message}));
+    });
   }
 
   // ── Anzeige im Projekt-Header ─────────────────────────────
@@ -2479,9 +2912,17 @@
   // ══════════════════════════════════════════════════════════
   onAuthStateChanged(auth,(user)=>{
     signedIn = !!user;
-    if(user){ renderUserbar(user); router(); }
+    if(user){
+      renderUserbar(user);
+      router();
+      // Token nachladen und den GitHub-Bereich dann neu zeichnen. Die Ansicht
+      // wartet bewusst nicht darauf, damit die Projekte sofort erscheinen.
+      loadGithubToken().then(()=>{ if(signedIn) githubHomeRepaint(); });
+    }
     else {
       ideasUnlocked = false;   // nach dem Abmelden wird der Code erneut verlangt
+      // Token und Repo-Liste nicht im Speicher liegen lassen
+      githubToken=''; githubLogin=''; myReposCache=null;
       renderLogin();
     }
   });
