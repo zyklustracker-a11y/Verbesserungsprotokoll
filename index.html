@@ -941,6 +941,7 @@
   let unsubs = [];
   let projectsCache = [];
   let ideasCache = [];
+  let todosCache = [];         // To-dos, nach order sortiert
   let promptsCache = [];       // gespeicherte Prompts, nach order sortiert
   let promptsOpen = false;     // Bereich „Getestete Prompts" startet eingeklappt
   let signedIn = false;        // wird vom Auth-Gate am Dateiende gesetzt
@@ -2551,7 +2552,10 @@
       if(!val) return;
       btn.disabled=true;
       try{
-        await addDoc(todosRef,{text:val,createdAt:serverTimestamp()});
+        // Neue To-dos oben einsortieren (kleinster order-Wert = oben) –
+        // genau das Verhalten von vorher (createdAt desc).
+        const minOrder = todosCache.reduce((m,d)=>Math.min(m, d.order??0), 0);
+        await addDoc(todosRef,{text:val,order:minOrder-1,createdAt:serverTimestamp()});
         ta.value='';
       }catch(err){ console.error(err); alert('To-do konnte nicht gespeichert werden.'); }
       btn.disabled=false; ta.focus();
@@ -2560,18 +2564,52 @@
   }
 
   function subscribeTodos(container){
+    // Nach createdAt (neu→alt) abfragen – das ist auch die Alt-Anzeige­reihenfolge,
+    // anhand derer fehlende order-Werte einmalig initialisiert werden.
     const q = query(todosRef, orderBy('createdAt','desc'));
     track(onSnapshot(q,(snap)=>{
+      let docs = snap.docs.map(d=>({id:d.id, ...d.data()}));
+
+      // Migration: To-dos ohne order-Feld anhand der aktuellen Anzeige-
+      // reihenfolge (createdAt desc) mit fortlaufenden Werten versehen.
+      if(docs.some(d=> typeof d.order !== 'number')){
+        const batch = writeBatch(db);
+        docs.forEach((d,i)=>{
+          if(typeof d.order !== 'number'){
+            d.order = i;
+            batch.update(doc(db,'todos',d.id),{order:i});
+          }
+        });
+        batch.commit().catch(err=>console.error(err));
+      }
+
+      // Aufsteigend nach order sortieren (kleinster Wert = oben).
+      docs.sort((a,b)=> (a.order??0) - (b.order??0));
+      todosCache = docs;
+
       container.innerHTML='';
-      if(snap.empty){
+      if(docs.length===0){
         container.appendChild(el('p',{class:'empty',text:'Keine offenen To-dos – trag oben dein erstes ein.'}));
         return;
       }
-      snap.docs.forEach(d=> container.appendChild(buildTodoItem(d.id,d.data())));
+      docs.forEach((d,i)=> container.appendChild(buildTodoItem(d.id,d,i,docs.length)));
     },(err)=>console.error(err)));
   }
 
-  function buildTodoItem(id,data){
+  async function moveTodo(index,dir){
+    const target = index+dir;
+    if(target<0 || target>=todosCache.length) return;
+    const a = todosCache[index], b = todosCache[target];
+    const oa = (a.order ?? index), ob = (b.order ?? target);
+    try{
+      const batch = writeBatch(db);
+      batch.update(doc(db,'todos',a.id),{order:ob});
+      batch.update(doc(db,'todos',b.id),{order:oa});
+      await batch.commit();
+    }catch(err){ console.error(err); alert('Reihenfolge konnte nicht geändert werden.'); }
+  }
+
+  function buildTodoItem(id,data,index,total){
     const item = el('div',{class:'todo-item'});
 
     const textDiv = el('div',{class:'idea-text',text:data.text});
@@ -2581,6 +2619,16 @@
     const foot = el('div',{class:'idea-foot'});
     foot.appendChild(el('div',{class:'meta',text:(data.updatedAt?'bearb. ':'')+fmtDate(data.updatedAt||data.createdAt)}));
     const actions = el('div',{class:'idea-actions'});
+
+    // Reihenfolge ändern (wie bei den App-Ideen)
+    const move = el('div',{class:'idea-move'});
+    const upBtn   = el('button',{class:'ctrl-btn',title:'Nach oben',text:'▲',onclick:()=>moveTodo(index,-1)});
+    const downBtn = el('button',{class:'ctrl-btn',title:'Nach unten',text:'▼',onclick:()=>moveTodo(index,1)});
+    upBtn.disabled   = (index===0);
+    downBtn.disabled = (index===total-1);
+    move.appendChild(upBtn); move.appendChild(downBtn);
+    actions.appendChild(move);
+
     const editBtn = el('button',{class:'row-btn',title:'Bearbeiten',text:'✎',style:'opacity:.85;'});
     const delBtn  = el('button',{class:'row-btn del',title:'Löschen',text:'✕',style:'opacity:.85;'});
     actions.appendChild(editBtn); actions.appendChild(delBtn);
