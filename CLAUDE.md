@@ -9,11 +9,15 @@ Sprache der UI und aller Texte/Kommentare: **Deutsch**.
 - **Single-File-App**: Die gesamte App lebt in `index.html` (HTML + CSS + JS).
   KEIN Build-Schritt, KEIN Framework, KEINE npm-Abhängigkeiten.
   Niemals React/Vue/Bundler vorschlagen oder die App in Module aufteilen.
-  Einzige Ausnahme: `firebase-messaging-sw.js`. Ein Service Worker MUSS
-  laut Browser-Vorgabe eine eigene Datei sein – das ist keine Einladung,
-  weiteren App-Code auszulagern. Die Firebase-Konfiguration steht dort ein
-  zweites Mal, weil ein Worker nichts aus `index.html` lesen kann: wird sie
-  hier geändert, dort mitändern.
+  Ausnahmen gibt es nur, wo der Browser eine eigene Datei verlangt:
+  `firebase-messaging-sw.js` (ein Service Worker muss eine eigene Datei
+  sein), `manifest.json` sowie `icon-192.png` und `icon-512.png` (Manifest
+  und dessen Icons lassen sich nicht einbetten). Das ist keine Einladung,
+  weiteren App-Code auszulagern. Die Firebase-Konfiguration steht im
+  Service Worker ein zweites Mal, weil ein Worker nichts aus `index.html`
+  lesen kann: wird sie hier geändert, dort mitändern. Ebenso stehen die
+  Farben in `manifest.json` als feste Werte – JSON kennt keine
+  CSS-Variablen; sie entsprechen `--ink-bg`.
 - `backup.html` ist ein separater, schlanker Backup-Viewer. Bei Design-Änderungen
   prüfen, ob die CSS-Variablen dort synchron bleiben.
 - `firestore.rules` = Security-Regeln. Bei jeder neuen Collection MUSS hier
@@ -89,7 +93,12 @@ Sprache der UI und aller Texte/Kommentare: **Deutsch**.
 - `pushTokens`-Dokument-ID ist der SHA-256 des Tokens, damit dasselbe Gerät
   sich nicht vervielfacht.
 - Auf iPhone/iPad kommt Web-Push nur in der über „Zum Home-Bildschirm"
-  installierten App an, nicht im Safari-Tab.
+  installierten App an, nicht im Safari-Tab. Darauf weist `paintIosHint()`
+  ausserhalb der Einstellungen hin – einmal je Sitzung, wegklickbar.
+- Die Erlaubnis wird NIE beim Laden abgefragt, sondern erst beim
+  Einschalten der Erinnerung. Scheitert sie, wird `enabled:false`
+  gespeichert – eine eingeschaltete Erinnerung ohne Zustellweg wäre eine
+  stille Lüge.
 
 ## Code-Konventionen
 
