@@ -119,7 +119,7 @@
   .back-link:hover{color:var(--brass);}
 
   /* Buttons */
-  input[type=text],input[type=password],textarea{
+  input[type=text],input[type=password],input[type=time],textarea{
     background:var(--ink-bg-raised);
     border:1px solid var(--hairline);
     color:var(--paper-text);
@@ -137,7 +137,9 @@
   }
   textarea{resize:vertical;line-height:1.5;min-height:52px;}
   input[type=text]::placeholder,input[type=password]::placeholder,textarea::placeholder{color:var(--paper-text-dim);}
-  input[type=text]:focus,input[type=password]:focus,textarea:focus{border-color:var(--brass-dim);}
+  input[type=text]:focus,input[type=password]:focus,input[type=time]:focus,textarea:focus{border-color:var(--brass-dim);}
+  /* Uhrzeit-Feld: das eingebaute Symbol ist sonst fast unsichtbar */
+  input[type=time]{color-scheme:dark;}
 
   button.btn{
     background:var(--brass);
@@ -898,6 +900,12 @@
   }
   .nav-item.active{color:var(--brass);}
   .nav-item:active{background:var(--ink-bg);}
+  /* Mit sechs Einträgen wird es bei knapp 901 px eng: dort verschwindet
+     die Mail-Adresse aus der userbar, dann genügt ein schmalerer Rand. */
+  @media (max-width:1150px){
+    .nav-inner{padding-right:150px;}
+    #userbar .ub-mail{display:none;}
+  }
   @media (max-width:900px){
     .nav-inner{padding-right:16px;padding-left:12px;}
     .nav-links{display:none;}
@@ -1094,6 +1102,7 @@
   const todosRef    = collection(db,'todos');
   const promptsRef  = collection(db,'savedPrompts');
   const savedFilesRef = collection(db,'savedFiles');
+  const pushTokensRef = collection(db,'pushTokens');
 
   function entriesRefFor(project){
     return project.legacyCollection
@@ -1159,7 +1168,8 @@
     {hash:'#/todos',   label:'To-dos'},
     {hash:'#/ideen',   label:'App-Ideen'},
     {hash:'#/prompts', label:'Prompts'},
-    {hash:'#/dateien', label:'Dateien'}
+    {hash:'#/dateien', label:'Dateien'},
+    {hash:'#/einstellungen', label:'Einstellungen'}
   ];
   const navEl = document.getElementById('mainnav');
   let navMenuClose = null;     // schliesst das offene Overlay-Menü
@@ -1253,6 +1263,7 @@
     else if(hash==='#/ideen')   renderIdeen();
     else if(hash==='#/prompts') renderPrompts();
     else if(hash==='#/dateien') renderSavedFilesView();
+    else if(hash==='#/einstellungen') renderSettings();
     else                        renderHome();
     window.scrollTo(0,0);
   }
@@ -3607,6 +3618,300 @@
 
     restore(null);
     return item;
+  }
+
+  // ══════════════════════════════════════════════════════════
+  //  EINSTELLUNGEN · tägliche To-do-Erinnerung
+  //
+  //  Eine Webseite kann sich selbst KEINE Benachrichtigung auf eine
+  //  Uhrzeit legen – zu dem Zeitpunkt ist sie ja geschlossen. Der
+  //  Versand kommt deshalb von aussen: der GitHub-Actions-Workflow
+  //  „To-do-Erinnerung“ läuft alle 15 Minuten, liest die Einstellungen
+  //  und die offenen To-dos aus Firestore und schickt zur eingestellten
+  //  Uhrzeit einmal pro Tag eine Nachricht an die angemeldeten Geräte.
+  //
+  //  Ablage:
+  //    settings/notifications → { enabled, time, timezone, lastSentDate }
+  //    settings/push          → { vapidPublicKey }   (Web-Push-Zertifikat)
+  //    pushTokens/{hash}      → { token, label, ua, createdAt, lastSeenAt }
+  //
+  //  Die Dokument-ID der Token ist der SHA-256 des Tokens: dadurch legt
+  //  dasselbe Gerät bei jeder Anmeldung denselben Eintrag an, statt sich
+  //  zu vervielfachen.
+  // ══════════════════════════════════════════════════════════
+
+  const NOTIFY_DOC = ()=>doc(db,'settings','notifications');
+  const PUSH_DOC   = ()=>doc(db,'settings','push');
+
+  function defaultNotifySettings(){
+    let tz = 'Europe/Zurich';
+    try{ tz = Intl.DateTimeFormat().resolvedOptions().timeZone || tz; }catch(e){}
+    return { enabled:false, time:'09:00', timezone:tz, lastSentDate:'' };
+  }
+  // Defensiv lesen – fehlende oder falsch getippte Werte werden ersetzt.
+  function readNotifySettings(raw){
+    const d = defaultNotifySettings();
+    const r = (raw && typeof raw==='object') ? raw : {};
+    return {
+      enabled: r.enabled===true,
+      time: /^([01]\d|2[0-3]):[0-5]\d$/.test(String(r.time||'')) ? String(r.time) : d.time,
+      timezone: (typeof r.timezone==='string' && r.timezone.trim()) ? r.timezone.trim() : d.timezone,
+      lastSentDate: typeof r.lastSentDate==='string' ? r.lastSentDate : ''
+    };
+  }
+
+  async function sha256Hex(text){
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  }
+  function deviceLabel(){
+    const ua = navigator.userAgent || '';
+    if(/iPhone/.test(ua))     return 'iPhone';
+    if(/iPad/.test(ua))       return 'iPad';
+    if(/Android/.test(ua))    return 'Android';
+    if(/Macintosh/.test(ua))  return 'Mac';
+    if(/Windows/.test(ua))    return 'Windows-PC';
+    return 'Dieses Gerät';
+  }
+  // Auf dem iPhone kommt Web-Push nur an, wenn die Seite über
+  // „Zum Home-Bildschirm“ installiert wurde – im normalen Safari-Tab nicht.
+  function isIos(){ return /iPhone|iPad|iPod/.test(navigator.userAgent||''); }
+  function isStandalone(){
+    return window.navigator.standalone===true
+        || window.matchMedia('(display-mode: standalone)').matches;
+  }
+
+  // Meldet dieses Gerät an. Wirft mit verständlichem Text, wo es hakt.
+  async function enablePushOnThisDevice(onStep){
+    const step = (m)=>{ if(onStep) onStep(m); };
+    if(!('serviceWorker' in navigator) || !('Notification' in window) || !('PushManager' in window)){
+      throw new Error('Dieser Browser kann keine Benachrichtigungen empfangen.');
+    }
+    if(isIos() && !isStandalone()){
+      throw new Error('Auf dem iPhone und iPad funktionieren Benachrichtigungen nur, wenn die Seite '+
+        'über „Teilen → Zum Home-Bildschirm“ installiert ist. Bitte von dort erneut öffnen.');
+    }
+
+    step('Web-Push-Zertifikat wird gelesen …');
+    let vapid = '';
+    try{
+      const snap = await getDoc(PUSH_DOC());
+      if(snap.exists()) vapid = String((snap.data()||{}).vapidPublicKey || '').trim();
+    }catch(err){ throw new Error(describeError(err)); }
+    if(!vapid){
+      throw new Error('Es fehlt noch das Web-Push-Zertifikat. Unten unter „Technische Einrichtung“ '+
+        'den öffentlichen Schlüssel aus der Firebase Console eintragen.');
+    }
+
+    step('Erlaubnis wird abgefragt …');
+    const perm = await Notification.requestPermission();
+    if(perm!=='granted'){
+      throw new Error(perm==='denied'
+        ? 'Benachrichtigungen sind für diese Seite blockiert. Das lässt sich nur in den '+
+          'Browser-Einstellungen wieder freigeben.'
+        : 'Ohne Erlaubnis können keine Benachrichtigungen ankommen.');
+    }
+
+    step('Hintergrunddienst wird eingerichtet …');
+    // Relativer Pfad: funktioniert unter github.io/Verbesserungsprotokoll/
+    // genauso wie unter einer eigenen Domain.
+    const reg = await navigator.serviceWorker.register('firebase-messaging-sw.js');
+    await navigator.serviceWorker.ready;
+
+    step('Gerät wird angemeldet …');
+    // Erst hier nachladen: so bleibt der Start der App schlank und
+    // Browser ohne Push-Unterstützung stolpern nicht darüber.
+    const mod = await import('https://www.gstatic.com/firebasejs/10.13.0/firebase-messaging.js');
+    if(typeof mod.isSupported==='function' && !(await mod.isSupported())){
+      throw new Error('Dieser Browser unterstützt Web-Push nicht.');
+    }
+    const token = await mod.getToken(mod.getMessaging(fb),{
+      vapidKey: vapid, serviceWorkerRegistration: reg
+    });
+    if(!token) throw new Error('Es kam kein Anmelde-Token zurück – bitte noch einmal versuchen.');
+
+    await setDoc(doc(db,'pushTokens', await sha256Hex(token)),{
+      token,
+      label: deviceLabel(),
+      ua: String(navigator.userAgent||'').slice(0,300),
+      createdAt: serverTimestamp(),
+      lastSeenAt: serverTimestamp()
+    });
+    return token;
+  }
+
+  function renderSettings(){
+    app.innerHTML='';
+    const h = buildSectionHead('⚙️ Einstellungen','Benachrichtigungen');
+    app.appendChild(h.header);
+
+    // ── Tägliche Erinnerung ──────────────────────────────────
+    const enabledBox = el('input',{type:'checkbox'});
+    const timeInput  = el('input',{type:'time',class:'time-input',value:'09:00'});
+    const tzLine     = el('p',{class:'hg-sub',style:'margin:8px 0 0;'});
+    const saveBtn    = el('button',{class:'btn',type:'button',text:'Speichern'});
+    const saveStatus = el('p',{class:'hg-status',style:'display:none;'});
+    let current = defaultNotifySettings();
+
+    function paintSettings(){
+      enabledBox.checked = current.enabled;
+      timeInput.value    = current.time;
+      tzLine.textContent = 'Zeitzone: '+current.timezone+
+        (current.lastSentDate ? ' · zuletzt gesendet am '+current.lastSentDate : '');
+    }
+
+    saveBtn.addEventListener('click',async()=>{
+      saveBtn.disabled=true;
+      saveStatus.style.display=''; saveStatus.className='hg-status';
+      saveStatus.textContent='Wird gespeichert …';
+      let tz = current.timezone;
+      try{ tz = Intl.DateTimeFormat().resolvedOptions().timeZone || tz; }catch(e){}
+      try{
+        await setDoc(NOTIFY_DOC(),{
+          enabled: enabledBox.checked,
+          time: /^([01]\d|2[0-3]):[0-5]\d$/.test(timeInput.value) ? timeInput.value : '09:00',
+          timezone: tz,
+          updatedAt: serverTimestamp()
+        },{merge:true});
+        saveStatus.className='hg-status ok';
+        saveStatus.textContent = enabledBox.checked
+          ? 'Gespeichert. Die Erinnerung kommt täglich um '+timeInput.value+' Uhr.'
+          : 'Gespeichert. Es werden keine Erinnerungen mehr verschickt.';
+      }catch(err){
+        console.error(err);
+        saveStatus.className='hg-status err';
+        saveStatus.textContent=describeError(err);
+      }
+      saveBtn.disabled=false;
+    });
+
+    app.appendChild(el('div',{class:'sp-form'},[
+      el('p',{class:'section-label',text:'Tägliche Erinnerung'}),
+      el('p',{class:'hg-hint',text:'Einmal am Tag eine Mitteilung mit deinen offenen To-dos. '+
+        'Verschickt wird sie von aussen, die App muss dafür nicht offen sein.'}),
+      el('label',{class:'sf-opt'},[
+        enabledBox,
+        el('span',{text:'Tägliche Erinnerung an offene To-dos'})
+      ]),
+      el('div',{class:'field',style:'margin-top:16px;max-width:220px;'},[
+        el('label',{text:'Uhrzeit'}),
+        timeInput
+      ]),
+      tzLine,
+      el('div',{class:'sp-form-actions',style:'margin-top:16px;'},[saveBtn]),
+      saveStatus
+    ]));
+
+    // ── Geräte ───────────────────────────────────────────────
+    const deviceStatus = el('p',{class:'hg-status',style:'display:none;'});
+    const enableBtn = el('button',{class:'btn',type:'button',text:'Benachrichtigungen auf diesem Gerät erlauben'});
+    enableBtn.addEventListener('click',async()=>{
+      enableBtn.disabled=true;
+      deviceStatus.style.display=''; deviceStatus.className='hg-status';
+      try{
+        await enablePushOnThisDevice((m)=>{ deviceStatus.textContent=m; });
+        deviceStatus.className='hg-status ok';
+        deviceStatus.textContent='Dieses Gerät ist angemeldet.';
+      }catch(err){
+        console.error(err);
+        deviceStatus.className='hg-status err';
+        deviceStatus.textContent = err && err.message ? err.message : describeError(err);
+      }
+      enableBtn.disabled=false;
+    });
+
+    const deviceList = el('div');
+    const deviceBox = el('div',{class:'sp-form',style:'border-top:1px solid var(--hairline);padding-top:28px;'},[
+      el('p',{class:'section-label',text:'Angemeldete Geräte'}),
+      el('p',{class:'hg-hint',text:'Jedes Gerät muss sich einmal selbst anmelden. '+
+        (isIos()
+          ? 'Auf dem iPhone geht das nur, wenn die Seite über „Teilen → Zum Home-Bildschirm“ installiert ist.'
+          : 'Auf dem iPhone geht das nur aus der über „Zum Home-Bildschirm“ installierten App heraus.')}),
+      el('div',{class:'sp-form-actions'},[enableBtn]),
+      deviceStatus,
+      deviceList
+    ]);
+    app.appendChild(deviceBox);
+
+    // ── Technische Einrichtung (eingeklappt) ─────────────────
+    const vapidInput = el('input',{type:'text',placeholder:'B… – öffentlicher Schlüssel',
+      autocapitalize:'off',autocorrect:'off',spellcheck:'false'});
+    const vapidBtn = el('button',{class:'btn small',type:'button',text:'Schlüssel speichern'});
+    const vapidMsg = el('p',{class:'hg-status',style:'display:none;'});
+    vapidBtn.addEventListener('click',async()=>{
+      vapidBtn.disabled=true;
+      vapidMsg.style.display=''; vapidMsg.className='hg-status';
+      vapidMsg.textContent='Wird gespeichert …';
+      try{
+        await setDoc(PUSH_DOC(),{
+          vapidPublicKey: vapidInput.value.trim(), updatedAt: serverTimestamp()
+        },{merge:true});
+        vapidMsg.className='hg-status ok';
+        vapidMsg.textContent='Gespeichert. Jetzt oben das Gerät anmelden.';
+      }catch(err){
+        console.error(err);
+        vapidMsg.className='hg-status err';
+        vapidMsg.textContent=describeError(err);
+      }
+      vapidBtn.disabled=false;
+    });
+
+    app.appendChild(el('details',{class:'hg-json'},[
+      el('summary',{text:'Technische Einrichtung'}),
+      el('ol',{class:'gh-steps',html:
+        '<li>Firebase Console → <strong>Projekteinstellungen → Cloud Messaging</strong> öffnen.</li>'+
+        '<li>Unter <strong>Web Push certificates</strong> ein Schlüsselpaar erzeugen.</li>'+
+        '<li>Den angezeigten <strong>öffentlichen Schlüssel</strong> hier einfügen und speichern. '+
+        'Er ist nicht geheim – der Versand wird über den GitHub-Secret abgesichert.</li>'}),
+      el('div',{class:'field'},[el('label',{text:'Web-Push-Zertifikat (öffentlicher Schlüssel)'}),vapidInput]),
+      el('div',{},[vapidBtn]),
+      vapidMsg
+    ]));
+
+    app.appendChild(buildFooter());
+
+    // ── Daten laden ──────────────────────────────────────────
+    track(onSnapshot(NOTIFY_DOC(),(snap)=>{
+      current = readNotifySettings(snap.exists() ? snap.data() : null);
+      paintSettings();
+      h.statusDot.classList.remove('offline');
+      h.statusText.textContent='Verbunden · Live-Synchronisierung aktiv';
+    },(err)=>{
+      console.error(err);
+      h.statusDot.classList.add('offline');
+      h.statusText.textContent=describeError(err);
+    }));
+
+    track(onSnapshot(PUSH_DOC(),(snap)=>{
+      const v = snap.exists() ? String((snap.data()||{}).vapidPublicKey||'') : '';
+      if(document.activeElement!==vapidInput) vapidInput.value = v;
+    },(err)=>console.error(err)));
+
+    track(onSnapshot(pushTokensRef,(snap)=>{
+      deviceList.innerHTML='';
+      if(snap.empty){
+        deviceList.appendChild(el('p',{class:'empty',
+          text:'Noch kein Gerät angemeldet – ohne das kommt keine Mitteilung an.'}));
+        return;
+      }
+      snap.docs.forEach(d=>{
+        const t = d.data()||{};
+        deviceList.appendChild(el('div',{class:'sf-file'},[
+          el('div',{class:'sf-file-name'},[
+            el('div',{text:t.label||'Gerät'}),
+            el('div',{class:'sf-file-size',text:'angemeldet '+fmtDate(t.createdAt)})
+          ]),
+          el('div',{class:'sf-file-actions'},[
+            el('button',{class:'row-btn del',type:'button',title:'Gerät abmelden',text:'✕',
+              style:'opacity:.85;',onclick:async()=>{
+                if(!confirm('„'+(t.label||'Gerät')+'“ abmelden? Dorthin kommen dann keine Mitteilungen mehr.')) return;
+                try{ await deleteDoc(doc(db,'pushTokens',d.id)); }
+                catch(err){ console.error(err); alert('Konnte nicht abgemeldet werden. '+describeError(err)); }
+              }})
+          ])
+        ]));
+      });
+    },(err)=>console.error(err)));
   }
 
   // ══════════════════════════════════════════════════════════

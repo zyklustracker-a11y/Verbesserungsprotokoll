@@ -1,0 +1,46 @@
+# Tägliche Erinnerung an offene To-dos.
+#
+# Der Zeitplan steht bewusst NICHT hier, sondern in der App unter
+# Einstellungen. Dieser Workflow läuft nur oft genug, damit das Skript die
+# eingestellte Uhrzeit treffen kann: GitHub plant Cron-Läufe in UTC und
+# startet sie unter Last auch mal später. Gesendet wird höchstens einmal
+# pro Tag – darum kümmert sich send-reminder.mjs.
+#
+# Einmalig einzurichten: das Repo-Secret FIREBASE_SERVICE_ACCOUNT mit dem
+# Dienstkonto-Schlüssel (Firebase Console → Projekteinstellungen →
+# Dienstkonten → Neuen privaten Schlüssel generieren). Fehlt es, läuft der
+# Workflow ohne Fehler durch und verschickt nichts.
+#
+# Achtung: GitHub schaltet geplante Workflows in Repos ab, in denen 60 Tage
+# lang nichts passiert ist. Dann hier auf „Enable workflow“ klicken.
+
+name: To-do-Erinnerung
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:        # zum Ausprobieren von Hand startbar
+
+# Zwei gleichzeitige Läufe könnten dieselbe Erinnerung doppelt schicken.
+concurrency:
+  group: todo-erinnerung
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  senden:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Erinnerung prüfen und gegebenenfalls senden
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: node .github/scripts/send-reminder.mjs

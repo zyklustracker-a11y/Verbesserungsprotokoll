@@ -75,6 +75,15 @@ service cloud.firestore {
       }
     }
 
+    // Angemeldete Geraete fuer die taegliche To-do-Erinnerung.
+    // Die Dokument-ID ist der SHA-256 des Push-Tokens, damit dasselbe Geraet
+    // bei jeder Anmeldung denselben Eintrag trifft. Gelesen und aufgeraeumt
+    // wird die Collection ausserdem vom GitHub-Actions-Workflow, der dafuer
+    // einen eigenen Dienstkonto-Schluessel benutzt und diese Regeln umgeht.
+    match /pushTokens/{tokenId} {
+      allow read, write: if isOwner();
+    }
+
     // Einstellungen, u. a. der GitHub-Token für die Hosting-Erkennung.
     // Der Token liegt hier bewusst und nicht in einer der anderen
     // Collections: der Backup-Viewer (backup.html) sichert nur projects,
