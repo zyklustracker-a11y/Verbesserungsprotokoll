@@ -311,6 +311,8 @@
     margin-top:8px;
   }
   .entry-actions{display:flex;gap:2px;flex-shrink:0;align-items:flex-start;}
+  /* Prompt-Pille sitzt zwischen Pfeilen und Stift – leicht ausgerichtet */
+  .entry-actions .pill-btn{margin-top:2px;align-self:flex-start;}
   /* Priorisierungs-Pfeile: dezent, aber sicher treffbares 32×32-Tap-Ziel fürs iPhone */
   .entry-move{display:flex;gap:1px;align-items:center;margin-right:2px;}
   .entry-move .ctrl-btn{
@@ -2108,8 +2110,8 @@
       text:(hasConcept?'● ':'')+'Konzept'});
     const promptBtn  = el('button',{class:'pill-btn'+(hasPrompt?' has':''),title:'Prompt anzeigen / bearbeiten',
       text:(hasPrompt?'● ':'')+'Prompt'});
-    conceptBtn.addEventListener('click',()=>openCpModal(id,data,'concept'));
-    promptBtn.addEventListener('click',()=>openCpModal(id,data,'prompt'));
+    conceptBtn.addEventListener('click',()=>openCpModal(doc(db,'appIdeas',id),data,'concept'));
+    promptBtn.addEventListener('click',()=>openCpModal(doc(db,'appIdeas',id),data,'prompt'));
     const editBtn = el('button',{class:'row-btn',title:'Bearbeiten',text:'✎',style:'opacity:.85;'});
     const delBtn  = el('button',{class:'row-btn del',title:'Löschen',text:'✕',style:'opacity:.85;'});
     actions.appendChild(conceptBtn); actions.appendChild(promptBtn);
@@ -2186,7 +2188,11 @@
     return ok;
   }
 
-  function openCpModal(id, data, field){
+  // docRef ist eine fertige Firestore-Dokument-Referenz. Dadurch funktioniert
+  // derselbe Dialog für App-Ideen (appIdeas/…) und für die Aufgaben eines
+  // Projekts (projects/…/entries/… bzw. die Legacy-Collection).
+  // opts.metaLabel ersetzt den Einleitungstext der Meta-Zeile.
+  function openCpModal(docRef, data, field, opts = {}){
     const isPrompt = field==='prompt';
     const title = isPrompt ? 'Prompt' : 'Konzept';
     let current = data[field] || '';
@@ -2200,6 +2206,7 @@
 
     const snippet = (data.text||'').replace(/\s+/g,' ').trim();
     const metaText = snippet.length>80 ? snippet.slice(0,80)+'…' : snippet;
+    const metaLabel = (opts && typeof opts.metaLabel==='string' && opts.metaLabel) ? opts.metaLabel : 'Zur Idee: ';
 
     // Kopfzeile: Titel links, zusätzlicher Kopieren-Button rechts (sticky).
     const headCopyBtn = el('button',{class:'btn cp-copy-head',type:'button',
@@ -2211,7 +2218,7 @@
     const contentWrap = el('div');
     const actions = el('div',{class:'modal-actions'});
     modal.appendChild(head);
-    modal.appendChild(el('div',{class:'cp-meta',text:'Zur Idee: '+(metaText||'(ohne Text)')}));
+    modal.appendChild(el('div',{class:'cp-meta',text:metaLabel+(metaText||'(ohne Text)')}));
     modal.appendChild(contentWrap);
     modal.appendChild(actions);
 
@@ -2288,7 +2295,7 @@
         const val = ta.value;
         saveBtn.disabled=true;
         try{
-          await updateDoc(doc(db,'appIdeas',id),{[field]:val,updatedAt:serverTimestamp()});
+          await updateDoc(docRef,{[field]:val,updatedAt:serverTimestamp()});
           current = val; data[field] = val; dirty=false;
           renderView();
         }catch(err){ console.error(err); alert('Konnte nicht gespeichert werden.'); saveBtn.disabled=false; }
@@ -2793,6 +2800,18 @@
       downBtn.disabled = (index===total-1);
       move.appendChild(upBtn); move.appendChild(downBtn);
       actions.appendChild(move);
+    }
+
+    // Prompt-Speicher – gleiche Optik wie bei den App-Ideen. Das Feld „prompt“
+    // ist optional: Aufgaben ohne das Feld laufen unverändert weiter.
+    // Bei erledigten Aufgaben nur zeigen, wenn schon etwas hinterlegt ist.
+    const hasPrompt = !!(data.prompt && String(data.prompt).trim());
+    if(!data.done || hasPrompt){
+      const promptBtn = el('button',{class:'pill-btn'+(hasPrompt?' has':''),type:'button',
+        title:'Prompt anzeigen / bearbeiten',text:(hasPrompt?'● ':'')+'Prompt'});
+      promptBtn.addEventListener('click',()=>
+        openCpModal(entryDocFor(project,id),data,'prompt',{metaLabel:'Zur Aufgabe: '}));
+      actions.appendChild(promptBtn);
     }
 
     const editBtn = el('button',{class:'row-btn',title:'Bearbeiten',text:'✎'});
