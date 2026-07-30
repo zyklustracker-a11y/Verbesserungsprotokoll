@@ -528,6 +528,7 @@
 
   /* Hosting-Dialog */
   .hg-hint{font-size:12.5px;line-height:1.55;color:var(--paper-text-dim);margin:0 0 18px;}
+  .hg-sub{font-size:12px;line-height:1.5;color:var(--paper-text-dim);margin:9px 0 0;}
   .hg-detect-row{display:flex;gap:10px;align-items:flex-start;}
   .hg-detect-row input[type=text]{flex:1;min-width:0;}
   .hg-status{
@@ -1160,6 +1161,11 @@
   // bewusst KEINE Migration.
   const HOSTING_FIELDS = ['host','liveUrl','repoUrl','dashboardUrl','deployNote'];
 
+  // Eigener GitHub-Konto-Name. Wird ergänzt, wenn in der Repo-Angabe nur der
+  // Repo-Name ohne Schrägstrich steht – dann genügt „mein-repo“ statt
+  // „zyklustracker-a11y/mein-repo“. Bei einem Kontowechsel hier ändern.
+  const GITHUB_OWNER = 'zyklustracker-a11y';
+
   // Reihenfolge = Priorität: die erste passende Konfigurationsdatei gewinnt.
   const HOST_SIGNATURES = [
     { host:'Netlify',            files:['netlify.toml'] },
@@ -1219,10 +1225,16 @@
   // ── Repo-Angabe zerlegen ──────────────────────────────────
   // Akzeptiert:  https://github.com/owner/repo(.git)  ·  git@github.com:owner/repo.git
   //              owner/repo  ·  URLs mit /tree/... oder Schrägstrich am Ende
+  //              sowie „repo“ allein – dann wird GITHUB_OWNER ergänzt.
   function parseRepoInput(value){
     let s = String(value||'').trim();
     if(!s) return null;
     s = s.replace(/^git\+/i,'').replace(/\/+$/,'');
+    // Kurzform ohne Schrägstrich: nur der Repo-Name
+    if(GITHUB_OWNER && /^[\w.-]+$/.test(s)){
+      const short = s.replace(/\.git$/i,'');
+      if(short) return {owner:GITHUB_OWNER, repo:short};
+    }
     let m = s.match(/^git@github\.com:([^/]+)\/(.+)$/i)
          || s.match(/^(?:ssh:\/\/)?git@github\.com\/([^/]+)\/(.+)$/i)
          || s.match(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/]+)\/([^/?#]+)/i)
@@ -1360,10 +1372,17 @@
   function openHostingModal(project,onSaved){
     const current = readHosting(project);
 
-    const repoInput = el('input',{type:'text',placeholder:'z. B. owner/repo oder https://github.com/owner/repo',
-      value:current.repoUrl||'',autocapitalize:'off',autocorrect:'off',spellcheck:'false'});
+    // Noch nichts hinterlegt? Dann den Projektnamen vorschlagen – Projekt und
+    // Repo heissen meistens gleich, und GitHub sucht ohne Rücksicht auf Gross-
+    // und Kleinschreibung. Nur wenn der Name als Repo-Name durchgehen kann.
+    const nameGuess = (!current.repoUrl && /^[\w.-]+$/.test(String(project.name||'').trim()))
+      ? String(project.name).trim() : '';
+    const repoInput = el('input',{type:'text',placeholder:'z. B. mein-repo',
+      value:current.repoUrl||nameGuess,autocapitalize:'off',autocorrect:'off',spellcheck:'false'});
     const detectBtn = el('button',{class:'btn',type:'button',text:'Erkennen'});
-    const status = el('p',{class:'hg-status',text:'Repo eintragen und „Erkennen“ drücken – oder die Felder unten direkt selbst ausfüllen.'});
+    const status = el('p',{class:'hg-status',text: nameGuess
+      ? ('Vorgeschlagen ist der Projektname. Passt er nicht, überschreiben – dann „Erkennen“ drücken.')
+      : 'Repo eintragen und „Erkennen“ drücken – oder die Felder unten direkt selbst ausfüllen.'});
 
     // Vorschau: alle Felder editierbar, damit sich jedes Ergebnis korrigieren lässt.
     const inputs = {
@@ -1387,8 +1406,8 @@
       const parsed = parseRepoInput(repoInput.value);
       if(!parsed){
         // Auch hier bleibt das Formular editierbar – manuell weitermachen geht immer.
-        setStatus('Die Repo-Angabe wurde nicht verstanden. Möglich sind z. B. owner/repo, '+
-                  'https://github.com/owner/repo oder git@github.com:owner/repo.git','err');
+        setStatus('Die Repo-Angabe wurde nicht verstanden. Möglich sind z. B. nur der Repo-Name, '+
+                  'owner/repo, https://github.com/owner/repo oder git@github.com:owner/repo.git','err');
         repoInput.focus();
         return;
       }
@@ -1444,7 +1463,10 @@
         + (current.updatedAt ? ' Zuletzt aktualisiert: '+fmtDate(current.updatedAt)+'.' : '')}),
       el('div',{class:'field'},[
         el('label',{text:'GitHub-Repo'}),
-        el('div',{class:'hg-detect-row'},[repoInput,detectBtn])
+        el('div',{class:'hg-detect-row'},[repoInput,detectBtn]),
+        el('p',{class:'hg-sub',text: GITHUB_OWNER
+          ? ('Der Repo-Name genügt – „'+GITHUB_OWNER+'/“ wird ergänzt. Eine vollständige URL geht auch.')
+          : 'Möglich sind owner/repo oder eine vollständige GitHub-URL.'})
       ]),
       status,
       el('div',{class:'hg-section'},[
