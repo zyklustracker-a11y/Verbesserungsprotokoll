@@ -60,11 +60,18 @@ service cloud.firestore {
     // liegen als Base64 in der Subcollection "files". Getrennt gespeichert,
     // damit das 1-MB-Limit von Firestore je Datei gilt und die Liste ohne
     // die Anhaenge geladen werden kann.
+    //
+    // Dateien ueber rund 500 KB passen nicht in ein einzelnes Dokument und
+    // werden deshalb in Teilstuecke zerlegt, die in "parts" liegen.
     match /savedFiles/{fileId} {
       allow read, write: if isOwner();
 
       match /files/{blobId} {
         allow read, write: if isOwner();
+
+        match /parts/{partId} {
+          allow read, write: if isOwner();
+        }
       }
     }
 
