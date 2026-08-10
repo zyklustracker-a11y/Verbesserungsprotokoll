@@ -363,7 +363,15 @@
   .checkbox.checked svg{opacity:1;}
 
   .entry-body{flex:1;min-width:0;}
-  .entry-text{font-size:15px;line-height:1.5;word-break:break-word;white-space:pre-wrap;}
+  /* Titel des Vorschlags: bricht wie die Notiz erst am rechten Rand um und
+     zerlegt notfalls auch überlange Wörter/URLs (kein waagerechtes Scrollen). */
+  .entry-text{
+    font-size:15px;
+    line-height:1.5;
+    white-space:pre-wrap;
+    word-break:break-word;
+    overflow-wrap:anywhere;
+  }
   .entry-text.done{color:var(--paper-text-dim);text-decoration:line-through;text-decoration-color:var(--hairline);}
   .entry-note{
     font-size:13.5px;
@@ -1067,10 +1075,17 @@
     /* oben etwas mehr Luft, damit der Abmelden-Button nicht am Inhalt klebt */
     .wrap{padding:54px 18px 80px;}
     h1{font-size:30px;}
-    /* Auf dem Handy zählt jeder Pixel Breite für den Notiztext */
-    li.entry{gap:10px;}
+    /* Auf dem Handy zählt jeder Pixel Breite für Titel und Notiztext.
+       Die Schalter (Pfeile, Prompt-Pille, Stift, Kreuz) belegen mit den
+       Touch-Tapflächen rund 208px und schrumpfen bewusst nicht mit – in einer
+       Zeile blieben für den Text nur 5px (320px-Display) bis 115px
+       (430px-Display) übrig, weshalb Titel und Notiz nach ein bis zwei Wörtern
+       umbrachen. Darum wandern die Schalter unter den Eintrag. */
+    li.entry{gap:10px;flex-wrap:wrap;}
     .idx{min-width:22px;}
     .entry-note{padding-left:10px;}
+    .entry-actions{flex-basis:100%;justify-content:flex-end;margin-top:4px;}
+    .entry-actions .pill-btn{margin-top:0;align-self:center;}
     .home-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:11px;}
     form.add-row{flex-direction:column;}
     form.add-row .btn{width:100%;}
