@@ -284,6 +284,17 @@
     color:var(--paper-text-dim);
     margin-top:6px;
   }
+  /* Verschlossene Projekte: Schloss auf der Karte, keine Inhalte */
+  .card-lock{
+    position:absolute;
+    top:14px;
+    right:14px;
+    font-size:15px;
+    line-height:1;
+    opacity:.8;
+  }
+  .card-count.locked{color:var(--brass);}
+  .project-card.locked .card-name{padding-right:24px;}
   .card-controls{
     display:flex;
     gap:2px;
@@ -639,6 +650,26 @@
   }
   .pill-btn:hover{color:var(--paper-text);background:var(--ink-bg);}
   .pill-btn.has{color:var(--brass);border-color:var(--brass-dim);}
+
+  .pill-btn.locked{color:var(--brass);border-color:var(--brass-dim);}
+
+  /* Projektsperre: Schalter in der Kopfzeile, Schirm vor dem Projekt */
+  .lock-bar{margin-top:18px;}
+  .lock-screen{
+    border:1px solid var(--hairline);
+    border-radius:5px;
+    padding:32px 24px;
+    text-align:center;
+    margin-top:32px;
+  }
+  .lock-screen .lock-sign{font-size:34px;line-height:1;margin:0 0 14px;}
+  .lock-screen h2{
+    font-family:'Fraunces',serif;
+    font-size:21px;
+    font-weight:500;
+    margin:0 0 8px;
+  }
+  .lock-screen p{color:var(--paper-text-dim);font-size:14px;margin:0 0 20px;}
 
   /* Hosting: Zeile unter dem Projekttitel */
   .host-bar{margin-top:18px;}
@@ -1366,6 +1397,14 @@
   let signedIn = false;        // wird vom Auth-Gate am Dateiende gesetzt
   let ideasUnlocked = false;   // App-Ideen erst nach Code-Eingabe sichtbar (nur diese Sitzung)
 
+  // Gerätelokaler Entsperr-Zustand für verschlossene Projekte: die ID des
+  // Projekts, für das auf DIESEM Gerät gerade der Code eingegeben wurde.
+  // Bewusst nur im Arbeitsspeicher – nicht in Firestore, nicht im
+  // localStorage, nicht über die Synchronisierung. Entsperre ich auf Gerät A,
+  // verlangt Gerät B weiterhin den Code. Geleert wird beim Verlassen des
+  // Projekts (Router), beim Wechsel in den Hintergrund und beim Abmelden.
+  let entsperrtesProjekt = null;
+
   // Priorisierung der offenen Aufgaben im aktuell geöffneten Projekt
   // (analog zu projectsCache / ideasCache – es ist immer nur ein Projekt sichtbar).
   let openEntriesCache   = [];                 // offene Aufgaben, nach order sortiert
@@ -1478,6 +1517,11 @@
     closeNavMenu();
     const hash = location.hash || '#/';
     const m = hash.match(/^#\/project\/(.+)$/);
+    // Die Entsperrung gilt nur für die laufende Projektsitzung: sobald ein
+    // anderes Ziel angesteuert wird, ist beim nächsten Öffnen wieder der
+    // Code fällig.
+    if(entsperrtesProjekt && entsperrtesProjekt !== (m ? decodeURIComponent(m[1]) : null))
+      entsperrtesProjekt = null;
     // Projektansicht bekommt die breite Spalte (siehe .wrap.view-project)
     app.classList.toggle('view-project', !!m);
     renderNav();
@@ -1492,6 +1536,21 @@
   }
   // Abgemeldet bleibt der Anmeldeschirm stehen, auch wenn sich der Hash ändert
   window.addEventListener('hashchange', ()=>{ if(signedIn) router(); });
+
+  // Wandert die App in den Hintergrund (Tab-Wechsel, Home-Taste, Bildschirm
+  // aus), fällt die Entsperrung. Beim Zurückkommen wird der Code erneut
+  // verlangt – deshalb zeichnet der Router die Ansicht dann neu.
+  // pagehide ergänzt visibilitychange, weil iOS beim Weglegen der App nicht
+  // immer beides feuert.
+  function sperreProjektWieder(){
+    if(!entsperrtesProjekt) return;
+    entsperrtesProjekt = null;
+    if(signedIn && /^#\/project\//.test(location.hash||'')) router();
+  }
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='hidden') sperreProjektWieder();
+  });
+  window.addEventListener('pagehide', sperreProjektWieder);
 
   // ══════════════════════════════════════════════════════════
   //  ANSICHT 1 · PROJEKTÜBERSICHT (Startseite)
@@ -1547,7 +1606,8 @@
   }
 
   function buildProjectCard(p,index,total){
-    const card = el('div',{class:'project-card'});
+    const gesperrt = projektIstGesperrt(p);
+    const card = el('div',{class:'project-card'+(gesperrt?' locked':'')});
     card.style.borderLeftColor = p.color || '#c08552';
     card.addEventListener('click',(e)=>{
       if(e.target.closest('.card-controls')) return;
@@ -1556,6 +1616,17 @@
 
     card.appendChild(el('div',{class:'card-icon',text:p.icon||'📁'}));
     card.appendChild(el('p',{class:'card-name',text:p.name||'Ohne Namen'}));
+
+    // Verschlossen: Schloss statt Inhalt. Weder Host noch Aufgabenzahl werden
+    // gezeigt – aus der Übersicht soll nichts über das Projekt durchsickern.
+    // Der Zähler wird deshalb gar nicht erst abgefragt.
+    if(gesperrt){
+      card.appendChild(el('span',{class:'card-lock',text:'🔒',title:'Verschlossen',
+        'aria-label':'Verschlossen'}));
+      card.appendChild(el('p',{class:'card-count locked',text:'Verschlossen'}));
+      card.appendChild(buildProjectCardControls(p,index));
+      return card;
+    }
 
     // Host als kleines Badge – nur wenn für das Projekt einer hinterlegt ist
     const hostTag = hostBadge(readHosting(p).host,{mini:true});
@@ -1582,6 +1653,13 @@
         if(count.isConnected) count.textContent='';
       });
 
+    card.appendChild(buildProjectCardControls(p,index));
+    return card;
+  }
+
+  // Fußzeile der Karte. Steht bewusst separat, weil verschlossene Projekte
+  // dieselben Schalter bekommen, aber keinen Inhalt darüber.
+  function buildProjectCardControls(p,index){
     const controls = el('div',{class:'card-controls'});
     controls.appendChild(el('button',{class:'ctrl-btn',title:'Nach oben',text:'▲',
       onclick:()=>moveProject(index,-1)}));
@@ -1592,8 +1670,7 @@
       onclick:()=>openProjectModal(p)}));
     controls.appendChild(el('button',{class:'ctrl-btn danger',title:'Löschen',text:'🗑',
       onclick:()=>deleteProject(p)}));
-    card.appendChild(controls);
-    return card;
+    return controls;
   }
 
   async function moveProject(index,dir){
@@ -2450,14 +2527,22 @@
   }
 
   // ══════════════════════════════════════════════════════════
-  //  APP-IDEEN
+  //  ZUGANGSCODE · zentrale Sperre
   // ══════════════════════════════════════════════════════════
-  const IDEAS_CODE = '271201';
+  // Eine einzige Stelle für alles, was hinter dem Code liegt: die App-Ideen
+  // und verschlossene Projekte. Kommt ein weiterer Bereich dazu, ruft er
+  // ebenfalls openCodeModal() auf, statt sich eine eigene Abfrage zu bauen.
+  //
+  // WICHTIG: Der Code prüft nur, ob etwas angezeigt wird. Er ist keine
+  // Verschlüsselung – die Daten liegen unverändert in Firestore und sind
+  // dort ausschliesslich über die Owner-UID in den Rules geschützt.
+  const ACCESS_CODE = '271201';
 
-  // Code-Popup, das dem App-Ideen-Bereich vorgeschaltet ist.
+  // Code-Popup, das einem geschützten Bereich vorgeschaltet ist.
+  // titel steht als Überschrift im Popup (z. B. der Projektname).
   // onSuccess wird bei korrektem Code aufgerufen (Popup schließt sich zuvor),
   // onCancel beim Abbrechen bzw. Klick neben das Popup.
-  function openIdeaCodeModal(onSuccess,onCancel){
+  function openCodeModal(titel,onSuccess,onCancel){
     const codeInput = el('input',{type:'text',inputmode:'numeric',pattern:'[0-9]*',
       autocomplete:'off',placeholder:'Code eingeben',maxlength:'12'});
     const errorMsg = el('p',{style:'color:var(--danger);font-size:13px;margin:10px 0 0;display:none;',
@@ -2477,7 +2562,7 @@
     const okBtn = el('button',{class:'btn',text:'Bestätigen'});
 
     const modal = el('div',{class:'modal'},[
-      el('h2',{text:'App-Ideen'}),
+      el('h2',{text:titel||'Code'}),
       el('div',{class:'field'},[el('label',{text:'Code'}),codeInput,errorMsg]),
       el('div',{class:'modal-actions'},[
         el('button',{class:'btn ghost',text:'Abbrechen',onclick:()=>finish(false)}),
@@ -2489,7 +2574,7 @@
     codeInput.focus();
 
     function submit(){
-      if(codeInput.value.trim()===IDEAS_CODE){
+      if(codeInput.value.trim()===ACCESS_CODE){
         finish(true);
       } else {
         errorMsg.style.display='block';
@@ -2501,6 +2586,22 @@
     codeInput.addEventListener('keydown',(e)=>{ if(e.key==='Enter'){ e.preventDefault(); submit(); }});
     codeInput.addEventListener('input',()=>{ errorMsg.style.display='none'; });
   }
+
+  // ── Projektsperre ─────────────────────────────────────────
+  // Gespeichert und synchronisiert wird ausschliesslich das Feld `locked` am
+  // Projekt-Dokument: sperre ich auf Gerät A, ist es auch auf Gerät B zu.
+  // Der Entsperr-Zustand dagegen bleibt strikt auf diesem Gerät (siehe
+  // entsperrtesProjekt weiter oben) – er darf niemals nach Firestore, in den
+  // localStorage oder sonst in die Synchronisierung wandern, sonst öffnete
+  // eine Code-Eingabe das Projekt auf allen Geräten gleichzeitig.
+  //
+  // Defensiv gelesen: Projekte ohne das Feld (der komplette Altbestand) gelten
+  // als öffentlich. Es gibt bewusst KEINE Migration.
+  function projektIstGesperrt(p){ return !!(p && p.locked === true); }
+
+  // Gilt nur, solange genau dieses Projekt offen ist – Router, Wechsel in den
+  // Hintergrund und Abmelden setzen die Variable wieder auf null.
+  function projektIstEntsperrt(projectId){ return entsperrtesProjekt === projectId; }
 
   function buildIdeaForm(){
     const ta = el('textarea',{placeholder:'Neue App-Idee festhalten … (beliebig lang)',rows:'3',maxlength:'8000'});
@@ -4273,7 +4374,7 @@
 
     // Code-Schutz bleibt: ideasUnlocked gilt nur für die laufende Sitzung.
     if(ideasUnlocked){ paint(); return; }
-    openIdeaCodeModal(
+    openCodeModal('App-Ideen',
       ()=>{ ideasUnlocked = true; paint(); },
       ()=>{ location.hash = '#/'; }        // Abbrechen führt zurück zur Startseite
     );
@@ -4323,12 +4424,86 @@
       return;
     }
 
+    // Verschlossen? Dann steht vor dem Projekt die zentrale Code-Abfrage.
+    // Wichtig: Erst nach richtigem Code wird überhaupt etwas vom Inhalt
+    // gezeichnet oder abonniert – der Sperrschirm zeigt nur Name und Icon.
+    if(projektIstGesperrt(project) && !projektIstEntsperrt(project.id)){
+      zeichneSperrschirm(project);
+      return;
+    }
+    zeichneProjekt(project);
+  }
+
+  // Schirm vor einem verschlossenen Projekt. Die Code-Abfrage öffnet sich
+  // sofort; „Abbrechen“ führt zurück zur Übersicht, der Schalter darunter
+  // ruft sie erneut auf.
+  function zeichneSperrschirm(project){
+    function frage(){
+      openCodeModal(project.name||'Verschlossenes Projekt',
+        ()=>{
+          // Gilt nur auf diesem Gerät und nur für diese Projektsitzung.
+          entsperrtesProjekt = project.id;
+          app.innerHTML='';
+          app.appendChild(el('button',{class:'back-link',html:'‹ Alle Projekte',onclick:()=>{ location.hash='#/'; }}));
+          zeichneProjekt(project);
+        },
+        ()=>{ location.hash = '#/'; });
+    }
+    app.appendChild(el('div',{class:'lock-screen'},[
+      el('p',{class:'lock-sign',text:'🔒'}),
+      el('h2',{text:project.name||'Ohne Namen'}),
+      el('p',{text:'Dieses Projekt ist verschlossen. Zum Öffnen den Code eingeben.'}),
+      el('button',{class:'btn',type:'button',text:'Code eingeben',onclick:frage})
+    ]));
+    app.appendChild(buildFooter());
+    // Der Ladescreen darf nicht auf Daten warten, die erst nach einer
+    // Eingabe kommen (siehe Sicherheitsnetz beim Auth-Wechsel).
+    splashMelde('daten');
+    frage();
+  }
+
+  // Schalter „Öffentlich ⇄ Verschlossen“ in der Kopfzeile des Projekts.
+  // Geschrieben wird nur das synchronisierte Feld `locked`.
+  function buildLockBar(project){
+    const bar = el('div',{class:'lock-bar'});
+    const btn = el('button',{class:'pill-btn',type:'button'});
+    bar.appendChild(btn);
+
+    function paint(){
+      const gesperrt = projektIstGesperrt(project);
+      btn.textContent = gesperrt ? '🔒 Verschlossen' : '🔓 Öffentlich';
+      btn.title = gesperrt ? 'Projekt wieder öffentlich machen'
+                           : 'Projekt verschliessen – Öffnen nur noch mit Code';
+      btn.classList.toggle('locked', gesperrt);
+    }
+
+    btn.addEventListener('click',async()=>{
+      const neu = !projektIstGesperrt(project);
+      btn.disabled = true;
+      try{
+        await updateDoc(doc(db,'projects',project.id),{locked:neu});
+        project.locked = neu;
+        // Frisch verschlossen bleibt das Projekt in dieser Sitzung offen –
+        // wer es gerade zugesperrt hat, steht ja davor. Beim nächsten Öffnen
+        // (und auf jedem anderen Gerät sofort) ist der Code fällig.
+        entsperrtesProjekt = neu ? project.id : null;
+        paint();
+      }catch(err){ console.error(err); alert(describeError(err)); }
+      btn.disabled = false;
+    });
+
+    paint();
+    return bar;
+  }
+
+  function zeichneProjekt(project){
     const statusDot = el('span',{class:'status-dot'});
     const statusText = el('span',{text:'Verbindung wird hergestellt …'});
     app.appendChild(el('header',{class:'app-head'},[
       el('p',{class:'eyebrow',text:(project.icon||'📁')+'  Projekt'}),
       el('h1',{text:project.name}),
       el('p',{class:'sub'},[statusDot,statusText]),
+      buildLockBar(project),
       buildHostingBar(project)
     ]));
 
@@ -4635,6 +4810,7 @@
     }
     else {
       ideasUnlocked = false;   // nach dem Abmelden wird der Code erneut verlangt
+      entsperrtesProjekt = null;   // dito für verschlossene Projekte
       // Token und Repo-Liste nicht im Speicher liegen lassen
       githubToken=''; githubLogin=''; myReposCache=null;
       renderLogin();
