@@ -2,6 +2,37 @@
 
 Chronik der Änderungen an der App – neueste Einträge oben.
 
+## 2026-08-11 · Code einmal pro Sitzung statt pro Bereich
+
+**Beschreibung**
+
+Der Code muss nur noch **einmal je Sitzung und Gerät** eingegeben werden.
+Danach sind für diese Sitzung alle verschlossenen Projekte **und** die
+App-Ideen offen – vorher verlangte jedes Projekt und die Ideensammlung
+jeweils eine eigene Eingabe.
+
+- Die beiden Variablen `ideasUnlocked` und `entsperrtesProjekt` sind zu einer
+  einzigen zusammengefasst: `codeEntsperrt`. Gesetzt wird sie in
+  `openCodeModal()` selbst, damit es keine zwei Zustände geben kann.
+- Unverändert gerätelokal: reiner Arbeitsspeicher, kein Firestore, kein
+  `localStorage`, kein `sessionStorage`. Gerät B verlangt den Code weiterhin,
+  auch wenn Gerät A mit demselben Konto gleichzeitig entsperrt ist.
+- Unverändert flüchtig: Neuladen der Seite bzw. Neustart der App verlangt den
+  Code erneut. Ebenso nach dem Abmelden und nach „Verstecken“ bei den
+  App-Ideen – dieser Schalter sperrt jetzt alles hinter dem Code wieder ab.
+- **Geändert gegenüber der ersten Fassung:** Das Zurücksperren beim Wechsel in
+  den Hintergrund (`visibilitychange`/`pagehide`) ist entfernt. Ein
+  Tab-Wechsel oder ein kurzer Blick in eine andere App ist keine neue
+  Sitzung; die Sperre hielt sonst im Alltag nur wenige Sekunden.
+
+**Geänderte Dateien**
+
+- `index.html` – `codeEntsperrt` statt `ideasUnlocked`/`entsperrtesProjekt`,
+  Setzen in `openCodeModal()`, Hintergrund-Handler entfernt, Router
+  vereinfacht, „Verstecken“ sperrt alles
+- `CLAUDE.md` – Abschnitt „Zugangscode & Projektsperre“ nachgezogen
+- `VERBESSERUNGSPROTOKOLL.md` – dieser Eintrag
+
 ## 2026-08-11 · Aufgabenzähler auf jeder Projektkarte
 
 **Beschreibung**
@@ -46,12 +77,11 @@ Codes, der schon die App-Ideen schützt.
   richtigem Code werden Inhalte gezeichnet und Firestore-Listener
   abonniert. Falscher Code: Fehlermeldung, erneuter Versuch möglich.
   Abbrechen führt zurück zur Übersicht.
-- **Die Entsperrung bleibt gerätelokal.** Sie liegt ausschliesslich in der
-  Modul-Variable `entsperrtesProjekt` (reiner Arbeitsspeicher) – nicht in
-  Firestore, nicht im `localStorage`, nicht in der Synchronisierung.
-  Geleert wird sie beim Verlassen des Projekts, beim Wechsel in den
-  Hintergrund (`visibilitychange`/`pagehide`) und beim Abmelden; nach einem
-  Neustart der App ist der Code ohnehin wieder fällig.
+- **Die Entsperrung bleibt gerätelokal.** Sie liegt ausschliesslich in einer
+  Modul-Variable (reiner Arbeitsspeicher) – nicht in Firestore, nicht im
+  `localStorage`, nicht in der Synchronisierung. Nach einem Neustart der App
+  ist der Code wieder fällig. (Reichweite und Lebensdauer wurden im Eintrag
+  vom selben Tag oben angepasst.)
 - In der Projektübersicht tragen gesperrte Projekte ein Schloss und den
   Hinweis „Verschlossen“. Host-Badge und Anzahl offener Aufgaben werden
   weder angezeigt noch abgefragt.

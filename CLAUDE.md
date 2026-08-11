@@ -48,13 +48,19 @@ Sprache der UI und aller Texte/Kommentare: **Deutsch**.
 - Projekte tragen ein **optionales** Feld `locked` (Bool). Gelesen wird nur
   über `projektIstGesperrt()`; fehlt das Feld (kompletter Altbestand), gilt
   das Projekt als öffentlich. Keine Migration.
-- **Der Entsperr-Zustand darf niemals synchronisiert werden.** Er lebt in den
-  Modul-Variablen `ideasUnlocked` und `entsperrtesProjekt` – reiner
-  Arbeitsspeicher, kein Firestore, kein `localStorage`, kein `sessionStorage`.
-  Sonst öffnete eine Code-Eingabe auf Gerät A das Projekt auch auf Gerät B.
-- `entsperrtesProjekt` wird an drei Stellen geleert: im Router beim Verlassen
-  des Projekts, bei `visibilitychange`/`pagehide` (App im Hintergrund) und
-  beim Abmelden. Alle drei müssen bleiben, sonst bliebe ein Projekt offen.
+- **Der Entsperr-Zustand darf niemals synchronisiert werden.** Er lebt allein
+  in der Modul-Variable `codeEntsperrt` – reiner Arbeitsspeicher, kein
+  Firestore, kein `localStorage`, kein `sessionStorage`. Sonst öffnete eine
+  Code-Eingabe auf Gerät A den Bereich auch auf Gerät B.
+- **Eine Eingabe entsperrt die ganze Sitzung**: App-Ideen und alle
+  verschlossenen Projekte. Gesetzt wird `codeEntsperrt` deshalb in
+  `openCodeModal()` selbst, nicht bei den Aufrufern – so kann es keine zwei
+  Zustände geben. Nicht wieder in Einzelsperren aufteilen.
+- Zurückgesetzt wird nur an zwei Stellen: „Verstecken“ bei den App-Ideen und
+  Abmelden. Beim Neuladen ist die Variable ohnehin wieder `false`.
+- **Kein Zurücksperren beim Wechsel in den Hintergrund.** Es gab dafür einmal
+  `visibilitychange`/`pagehide`-Handler; sie sind bewusst entfernt, weil ein
+  Tab-Wechsel keine neue Sitzung ist. Nicht wieder einbauen.
 - In der Übersicht zeigt `buildProjectCard()` bei gesperrten Projekten Name,
   Icon, Schloss und die Anzahl offener Aufgaben – aber **kein** Host-Badge.
   Die blosse Zahl ist ausdrücklich gewollt (Wunsch des Nutzers), Texte oder

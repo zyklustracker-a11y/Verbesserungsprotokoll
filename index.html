@@ -1394,15 +1394,19 @@
   let promptsCache = [];       // gespeicherte Prompts, nach order sortiert
   let savedFilesCache = [];    // gespeicherte Dateien, nach order sortiert
   let signedIn = false;        // wird vom Auth-Gate am Dateiende gesetzt
-  let ideasUnlocked = false;   // App-Ideen erst nach Code-Eingabe sichtbar (nur diese Sitzung)
-
-  // Gerätelokaler Entsperr-Zustand für verschlossene Projekte: die ID des
-  // Projekts, für das auf DIESEM Gerät gerade der Code eingegeben wurde.
-  // Bewusst nur im Arbeitsspeicher – nicht in Firestore, nicht im
-  // localStorage, nicht über die Synchronisierung. Entsperre ich auf Gerät A,
-  // verlangt Gerät B weiterhin den Code. Geleert wird beim Verlassen des
-  // Projekts (Router), beim Wechsel in den Hintergrund und beim Abmelden.
-  let entsperrtesProjekt = null;
+  // Gerätelokaler Entsperr-Zustand für ALLES hinter dem Code: App-Ideen und
+  // verschlossene Projekte. Einmal eingegeben, ist für diese Sitzung auf
+  // diesem Gerät alles offen – das erspart im Alltag die stete Wiederholung.
+  //
+  // Bewusst nur eine Variable im Arbeitsspeicher: nicht in Firestore, nicht
+  // im localStorage, nicht im sessionStorage, nicht über die
+  // Synchronisierung. Damit gilt sie
+  //   · nur auf diesem Gerät  – Gerät B verlangt den Code weiterhin, selbst
+  //     wenn dort derselbe Account gleichzeitig online ist, und
+  //   · nur für diese Sitzung – beim Neuladen der Seite bzw. Neustart der App
+  //     ist sie wieder false, weil das Modul frisch geladen wird.
+  // Zusätzlich wird sie beim Abmelden und über „Verstecken“ zurückgesetzt.
+  let codeEntsperrt = false;
 
   // Priorisierung der offenen Aufgaben im aktuell geöffneten Projekt
   // (analog zu projectsCache / ideasCache – es ist immer nur ein Projekt sichtbar).
@@ -1516,11 +1520,6 @@
     closeNavMenu();
     const hash = location.hash || '#/';
     const m = hash.match(/^#\/project\/(.+)$/);
-    // Die Entsperrung gilt nur für die laufende Projektsitzung: sobald ein
-    // anderes Ziel angesteuert wird, ist beim nächsten Öffnen wieder der
-    // Code fällig.
-    if(entsperrtesProjekt && entsperrtesProjekt !== (m ? decodeURIComponent(m[1]) : null))
-      entsperrtesProjekt = null;
     // Projektansicht bekommt die breite Spalte (siehe .wrap.view-project)
     app.classList.toggle('view-project', !!m);
     renderNav();
@@ -1536,20 +1535,11 @@
   // Abgemeldet bleibt der Anmeldeschirm stehen, auch wenn sich der Hash ändert
   window.addEventListener('hashchange', ()=>{ if(signedIn) router(); });
 
-  // Wandert die App in den Hintergrund (Tab-Wechsel, Home-Taste, Bildschirm
-  // aus), fällt die Entsperrung. Beim Zurückkommen wird der Code erneut
-  // verlangt – deshalb zeichnet der Router die Ansicht dann neu.
-  // pagehide ergänzt visibilitychange, weil iOS beim Weglegen der App nicht
-  // immer beides feuert.
-  function sperreProjektWieder(){
-    if(!entsperrtesProjekt) return;
-    entsperrtesProjekt = null;
-    if(signedIn && /^#\/project\//.test(location.hash||'')) router();
-  }
-  document.addEventListener('visibilitychange',()=>{
-    if(document.visibilityState==='hidden') sperreProjektWieder();
-  });
-  window.addEventListener('pagehide', sperreProjektWieder);
+  // Kein Zurücksperren beim Wechsel in den Hintergrund: die Entsperrung soll
+  // die ganze Sitzung halten. Ein Tab-Wechsel oder ein kurzer Blick in eine
+  // andere App ist keine neue Sitzung. Beendet wird sie durch das Neuladen
+  // der Seite (dann ist codeEntsperrt ohnehin wieder false), durch
+  // „Verstecken“ bei den App-Ideen und durch das Abmelden.
 
   // ══════════════════════════════════════════════════════════
   //  ANSICHT 1 · PROJEKTÜBERSICHT (Startseite)
@@ -2575,6 +2565,10 @@
 
     function submit(){
       if(codeInput.value.trim()===ACCESS_CODE){
+        // Eine einzige Eingabe öffnet für diese Sitzung alles hinter dem Code
+        // – App-Ideen wie verschlossene Projekte. Bewusst hier und nicht bei
+        // den Aufrufern, damit es keine zwei Zustände geben kann.
+        codeEntsperrt = true;
         finish(true);
       } else {
         errorMsg.style.display='block';
@@ -2591,17 +2585,13 @@
   // Gespeichert und synchronisiert wird ausschliesslich das Feld `locked` am
   // Projekt-Dokument: sperre ich auf Gerät A, ist es auch auf Gerät B zu.
   // Der Entsperr-Zustand dagegen bleibt strikt auf diesem Gerät (siehe
-  // entsperrtesProjekt weiter oben) – er darf niemals nach Firestore, in den
+  // codeEntsperrt weiter oben) – er darf niemals nach Firestore, in den
   // localStorage oder sonst in die Synchronisierung wandern, sonst öffnete
   // eine Code-Eingabe das Projekt auf allen Geräten gleichzeitig.
   //
   // Defensiv gelesen: Projekte ohne das Feld (der komplette Altbestand) gelten
   // als öffentlich. Es gibt bewusst KEINE Migration.
   function projektIstGesperrt(p){ return !!(p && p.locked === true); }
-
-  // Gilt nur, solange genau dieses Projekt offen ist – Router, Wechsel in den
-  // Hintergrund und Abmelden setzen die Variable wieder auf null.
-  function projektIstEntsperrt(projectId){ return entsperrtesProjekt === projectId; }
 
   function buildIdeaForm(){
     const ta = el('textarea',{placeholder:'Neue App-Idee festhalten … (beliebig lang)',rows:'3',maxlength:'8000'});
@@ -4362,8 +4352,11 @@
       const h = buildSectionHead('💡 Ideensammlung','App-Ideen');
       app.appendChild(h.header);
       app.appendChild(el('div',{style:'margin-bottom:18px;'},[
+        // Schliesst die Sitzung hinter dem Code wieder ab – danach verlangen
+        // App-Ideen und verschlossene Projekte erneut die Eingabe.
         el('button',{class:'btn small ghost',type:'button',text:'Verstecken',
-          onclick:()=>{ ideasUnlocked=false; location.hash='#/'; }})
+          title:'Alles hinter dem Code wieder sperren',
+          onclick:()=>{ codeEntsperrt=false; location.hash='#/'; }})
       ]));
       app.appendChild(buildIdeaForm());
       const wrap = el('div');
@@ -4372,10 +4365,11 @@
       subscribeIdeas(wrap, statusHandlers(h.statusDot,h.statusText));
     }
 
-    // Code-Schutz bleibt: ideasUnlocked gilt nur für die laufende Sitzung.
-    if(ideasUnlocked){ paint(); return; }
+    // Code-Schutz bleibt: codeEntsperrt gilt nur auf diesem Gerät und nur
+    // für die laufende Sitzung.
+    if(codeEntsperrt){ paint(); return; }
     openCodeModal('App-Ideen',
-      ()=>{ ideasUnlocked = true; paint(); },
+      ()=>{ paint(); },
       ()=>{ location.hash = '#/'; }        // Abbrechen führt zurück zur Startseite
     );
   }
@@ -4424,10 +4418,11 @@
       return;
     }
 
-    // Verschlossen? Dann steht vor dem Projekt die zentrale Code-Abfrage.
-    // Wichtig: Erst nach richtigem Code wird überhaupt etwas vom Inhalt
-    // gezeichnet oder abonniert – der Sperrschirm zeigt nur Name und Icon.
-    if(projektIstGesperrt(project) && !projektIstEntsperrt(project.id)){
+    // Verschlossen und in dieser Sitzung noch kein Code eingegeben? Dann steht
+    // die zentrale Abfrage davor. Wichtig: Erst nach richtigem Code wird
+    // überhaupt etwas vom Inhalt gezeichnet oder abonniert – der Sperrschirm
+    // zeigt nur Name und Icon.
+    if(projektIstGesperrt(project) && !codeEntsperrt){
       zeichneSperrschirm(project);
       return;
     }
@@ -4441,8 +4436,8 @@
     function frage(){
       openCodeModal(project.name||'Verschlossenes Projekt',
         ()=>{
-          // Gilt nur auf diesem Gerät und nur für diese Projektsitzung.
-          entsperrtesProjekt = project.id;
+          // openCodeModal hat codeEntsperrt gesetzt – damit ist für diese
+          // Sitzung auf diesem Gerät alles hinter dem Code offen.
           app.innerHTML='';
           app.appendChild(el('button',{class:'back-link',html:'‹ Alle Projekte',onclick:()=>{ location.hash='#/'; }}));
           zeichneProjekt(project);
@@ -4483,10 +4478,9 @@
       try{
         await updateDoc(doc(db,'projects',project.id),{locked:neu});
         project.locked = neu;
-        // Frisch verschlossen bleibt das Projekt in dieser Sitzung offen –
-        // wer es gerade zugesperrt hat, steht ja davor. Beim nächsten Öffnen
-        // (und auf jedem anderen Gerät sofort) ist der Code fällig.
-        entsperrtesProjekt = neu ? project.id : null;
+        // Auf anderen Geräten greift die Sperre sofort. Hier bleibt das
+        // Projekt offen: wer gerade davorsitzt, hat den Code entweder schon
+        // eingegeben oder soeben selbst zugesperrt.
         paint();
       }catch(err){ console.error(err); alert(describeError(err)); }
       btn.disabled = false;
@@ -4809,8 +4803,7 @@
       loadGithubToken().then(()=>{ if(signedIn) githubHomeRepaint(); });
     }
     else {
-      ideasUnlocked = false;   // nach dem Abmelden wird der Code erneut verlangt
-      entsperrtesProjekt = null;   // dito für verschlossene Projekte
+      codeEntsperrt = false;   // nach dem Abmelden wird der Code erneut verlangt
       // Token und Repo-Liste nicht im Speicher liegen lassen
       githubToken=''; githubLogin=''; myReposCache=null;
       renderLogin();
