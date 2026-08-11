@@ -36,6 +36,30 @@ Sprache der UI und aller Texte/Kommentare: **Deutsch**.
 - Legacy-Handling: `ensureLegacyProject()` + `entriesRefFor()` mappen den
   Altbestand. Beim Refactoring nicht entfernen.
 
+## Zugangscode & Projektsperre (Abschnitt „ZUGANGSCODE" in index.html)
+
+- Es gibt genau **eine** Code-Abfrage: `ACCESS_CODE` + `openCodeModal(titel,
+  onSuccess, onCancel)`. App-Ideen und verschlossene Projekte rufen beide
+  diese Funktion. Kommt ein weiterer geschützter Bereich dazu, ebenfalls
+  hier andocken statt eine zweite Abfrage zu bauen.
+- Der Code entscheidet nur über die **Anzeige**. Die Daten liegen unverändert
+  in Firestore; geschützt sind sie ausschliesslich über die Owner-UID in den
+  Rules. Kein Sicherheitsversprechen daraus ableiten.
+- Projekte tragen ein **optionales** Feld `locked` (Bool). Gelesen wird nur
+  über `projektIstGesperrt()`; fehlt das Feld (kompletter Altbestand), gilt
+  das Projekt als öffentlich. Keine Migration.
+- **Der Entsperr-Zustand darf niemals synchronisiert werden.** Er lebt in den
+  Modul-Variablen `ideasUnlocked` und `entsperrtesProjekt` – reiner
+  Arbeitsspeicher, kein Firestore, kein `localStorage`, kein `sessionStorage`.
+  Sonst öffnete eine Code-Eingabe auf Gerät A das Projekt auch auf Gerät B.
+- `entsperrtesProjekt` wird an drei Stellen geleert: im Router beim Verlassen
+  des Projekts, bei `visibilitychange`/`pagehide` (App im Hintergrund) und
+  beim Abmelden. Alle drei müssen bleiben, sonst bliebe ein Projekt offen.
+- In der Übersicht zeigt `buildProjectCard()` bei gesperrten Projekten nur
+  Name, Icon und Schloss – **kein** Host-Badge und **keine** Aufgabenzahl.
+  Der Zähler wird gar nicht erst abgefragt. Dort nichts nachrüsten, was
+  Inhalte des Projekts verrät.
+
 ## Hosting-Erkennung (Abschnitt „HOSTING" in index.html)
 
 - Projekte tragen ein **optionales** `hosting`-Objekt: `host`, `liveUrl`,
