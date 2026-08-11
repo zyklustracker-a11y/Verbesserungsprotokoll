@@ -55,10 +55,13 @@ Sprache der UI und aller Texte/Kommentare: **Deutsch**.
 - `entsperrtesProjekt` wird an drei Stellen geleert: im Router beim Verlassen
   des Projekts, bei `visibilitychange`/`pagehide` (App im Hintergrund) und
   beim Abmelden. Alle drei müssen bleiben, sonst bliebe ein Projekt offen.
-- In der Übersicht zeigt `buildProjectCard()` bei gesperrten Projekten nur
-  Name, Icon und Schloss – **kein** Host-Badge und **keine** Aufgabenzahl.
-  Der Zähler wird gar nicht erst abgefragt. Dort nichts nachrüsten, was
-  Inhalte des Projekts verrät.
+- In der Übersicht zeigt `buildProjectCard()` bei gesperrten Projekten Name,
+  Icon, Schloss und die Anzahl offener Aufgaben – aber **kein** Host-Badge.
+  Die blosse Zahl ist ausdrücklich gewollt (Wunsch des Nutzers), Texte oder
+  andere Inhalte des Projekts gehören dort nicht hin.
+- Der Zählertext kommt einheitlich aus `aufgabenText(n)`: „0 Aufgaben übrig“,
+  „1 Aufgabe übrig“, „2 Aufgaben übrig“. Die Zahl steht immer da, auch die 0 –
+  keine Sonderformulierung wie „Keine offenen Aufgaben“ wieder einführen.
 
 ## Hosting-Erkennung (Abschnitt „HOSTING" in index.html)
 
