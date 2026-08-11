@@ -2,6 +2,28 @@
 
 Chronik der Änderungen an der App – neueste Einträge oben.
 
+## 2026-08-11 · Aufgabenzähler auf jeder Projektkarte
+
+**Beschreibung**
+
+Nachbesserung zur Projekt-Sperre: Der Zähler der offenen Aufgaben stand bei
+verschlossenen Projekten nicht mehr auf der Karte. Er ist jetzt bei **allen**
+Projekten sichtbar – verschlossen wie öffentlich.
+
+- Neue Hilfsfunktion `aufgabenText(n)` als einzige Stelle für den Text:
+  „0 Aufgaben übrig“, „1 Aufgabe übrig“, „2 Aufgaben übrig“. Die Zahl steht
+  immer da, auch die 0; die früheren Sonderformulierungen („Keine offenen
+  Aufgaben“, „1 offene Aufgabe übrig“) entfallen.
+- Verschlossene Projekte zeigen weiterhin das Schloss und weiterhin **kein**
+  Host-Badge. Neu ist allein die Zahl – sie verrät nichts über den Inhalt.
+
+**Geänderte Dateien**
+
+- `index.html` – `aufgabenText()`, Kartenaufbau in `buildProjectCard()`,
+  CSS-Regel `.card-count.locked` entfernt
+- `CLAUDE.md` – Abschnitt „Zugangscode & Projektsperre“ nachgezogen
+- `VERBESSERUNGSPROTOKOLL.md` – dieser Eintrag
+
 ## 2026-08-11 · Projekt-Sperre (Passwortschutz für einzelne Projekte)
 
 **Beschreibung**

@@ -293,7 +293,6 @@
     line-height:1;
     opacity:.8;
   }
-  .card-count.locked{color:var(--brass);}
   .project-card.locked .card-name{padding-right:24px;}
   .card-controls{
     display:flex;
@@ -1605,6 +1604,12 @@
     }));
   }
 
+  // Text unter dem Projektnamen. Die Zahl steht immer da – auch die 0, damit
+  // auf einen Blick vergleichbar ist, wie viel je Projekt noch offen ist.
+  function aufgabenText(n){
+    return n===1 ? '1 Aufgabe übrig' : n+' Aufgaben übrig';
+  }
+
   function buildProjectCard(p,index,total){
     const gesperrt = projektIstGesperrt(p);
     const card = el('div',{class:'project-card'+(gesperrt?' locked':'')});
@@ -1617,35 +1622,30 @@
     card.appendChild(el('div',{class:'card-icon',text:p.icon||'📁'}));
     card.appendChild(el('p',{class:'card-name',text:p.name||'Ohne Namen'}));
 
-    // Verschlossen: Schloss statt Inhalt. Weder Host noch Aufgabenzahl werden
-    // gezeigt – aus der Übersicht soll nichts über das Projekt durchsickern.
-    // Der Zähler wird deshalb gar nicht erst abgefragt.
+    // Verschlossen: Schloss auf der Karte. Der Aufgabenzähler bleibt bewusst
+    // auch hier stehen – er ist eine reine Zahl und verrät nichts über den
+    // Inhalt. Alles andere (z. B. das Host-Badge) entfällt.
     if(gesperrt){
       card.appendChild(el('span',{class:'card-lock',text:'🔒',title:'Verschlossen',
         'aria-label':'Verschlossen'}));
-      card.appendChild(el('p',{class:'card-count locked',text:'Verschlossen'}));
-      card.appendChild(buildProjectCardControls(p,index));
-      return card;
+    } else {
+      // Host als kleines Badge – nur wenn für das Projekt einer hinterlegt ist
+      const hostTag = hostBadge(readHosting(p).host,{mini:true});
+      if(hostTag) card.appendChild(hostTag);
     }
-
-    // Host als kleines Badge – nur wenn für das Projekt einer hinterlegt ist
-    const hostTag = hostBadge(readHosting(p).host,{mini:true});
-    if(hostTag) card.appendChild(hostTag);
 
     // Offene Aufgaben zählen. Bewusst eine serverseitige Aggregation statt
     // eines onSnapshot je Projekt: das wären dauerhaft offene Listener, die
     // jedes Dokument einzeln lesen – diese Abfrage kostet einen Bruchteil.
     // Aktuell genug, weil der Router die Startseite ohnehin neu zeichnet.
     // entriesRefFor() ist Pflicht, sonst zählt das Legacy-Projekt falsch.
-    const count = el('p',{class:'card-count',text:'…'});   // Platzhalter statt 0,
-    card.appendChild(count);                               // sonst blitzt eine falsche Zahl auf
+    const count = el('p',{class:'card-count',text:'…'});
+    card.appendChild(count);              // Platzhalter statt 0, sonst blitzt
+                                          // eine falsche Zahl auf
     getCountFromServer(query(entriesRefFor(p), where('done','==',false)))
       .then(snap=>{
         if(!count.isConnected) return;      // Ansicht inzwischen gewechselt
-        const n = snap.data().count;
-        count.textContent = n===0 ? 'Keine offenen Aufgaben'
-                          : (n===1 ? '1 offene Aufgabe übrig'
-                                   : n+' offene Aufgaben übrig');
+        count.textContent = aufgabenText(snap.data().count);
       })
       .catch(err=>{
         // Ein Zähler ist nicht kritisch – die Karte bleibt ohne ihn nutzbar.
