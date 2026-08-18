@@ -109,9 +109,25 @@ Sprache der UI und aller Texte/Kommentare: **Deutsch**.
   Firestore räumt Subcollections nicht selbst ab.
 - Jedes Bild bekommt ein kleines `thumb`. Ohne das hätten aufgeteilte
   Bilder keine Vorschau, weil ihr `data`-Feld leer ist.
-- Ordner: `webkitdirectory` und Drag & Drop gibt es nur am Rechner
-  (`canPickFolders`). iOS Safari kann beides nicht – dort die Bedienelemente
-  ausblenden statt tote Schalter zu zeigen.
+- Es gibt **einen** Auswahlbereich für alles: `buildFilePicker()`. Er kann
+  Dateidialog, Ordner, Ablegen und Einfügen. Keinen zweiten bauen.
+- Am Datei-Input steht bewusst **kein `accept`**. Jede Einschränkung macht
+  der Dateidialog des Betriebssystems zum Filter und graut alles andere aus
+  (auf dem iPhone träfe das z. B. `.md`). Nicht „zur Sicherheit" ergänzen.
+- Ordner wählen geht nur am Rechner (`canPickFolders`). **Ablegen** dagegen
+  überall ausser auf dem iPhone (`canDropFiles`) – das iPad kann aus der
+  Dateien-App ins Fenster ziehen, obwohl es keinen feinen Zeiger meldet.
+  Ablageziel ist nicht nur die gestrichelte Fläche: `picker.bindDrop(node)`
+  hängt Formular bzw. Popup mit dran.
+- Ein Fänger am `window` verhindert, dass eine daneben abgelegte Datei die
+  Seite ersetzt und die halb ausgefüllte Eingabe mitnimmt. Flächen mit der
+  Klasse `.sf-picker` lässt er durch – die haben ihren eigenen Handler.
+- Einfügen (⌘V/Strg+V) hört **einmal** am Dokument und liefert an
+  `aktiverPicker`; ein Handler je Picker bliebe bei jedem Neuzeichnen liegen.
+  Nur `clipboardData.files` wird abgefangen, damit reiner Text weiter ins
+  Textfeld geht. Eingefügtes heisst systemweit „image.png" und bekommt über
+  `eingefuegterName()` einen Namen mit Zeitstempel (`opts.name` in
+  `prepareFile`).
 - Vorschau: `openFilePreview()` zeigt Bilder gross, Textdateien lesbar und
   `.md` über `renderMarkdown()` gerendert. Der Markdown-Darsteller baut
   ausschliesslich über `el()` – aus einer Datei darf NIE HTML eingesetzt
