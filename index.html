@@ -3398,6 +3398,12 @@
   const canPickFolders = ('webkitdirectory' in HTMLInputElement.prototype)
     && window.matchMedia('(hover:hover) and (pointer:fine)').matches;
 
+  // Ablegen gibt es dagegen fast überall – auch auf dem iPad, das aus der
+  // Dateien-App ins Fenster ziehen kann, obwohl es keinen feinen Zeiger
+  // meldet und deshalb keine Ordner auswählen darf. Nur auf dem iPhone geht
+  // es nicht; dort bliebe die Fläche ein toter Schalter.
+  const canDropFiles = !/iPhone|iPod/.test(navigator.userAgent||'');
+
   function filesSubRef(docId){ return collection(db,'savedFiles',docId,'files'); }
   function partsSubRef(docId,fileId){ return collection(db,'savedFiles',docId,'files',fileId,'parts'); }
 
@@ -3488,10 +3494,12 @@
   // wirft einen Fehler mit klarer Begründung samt tatsächlicher Grösse.
   // Nichts wird stillschweigend abgeschnitten.
   // opts.shrinkImages===false speichert Bilder unverändert im Original.
+  // opts.name überschreibt den Dateinamen – nötig für Eingefügtes, das
+  // systemweit immer „image.png" heisst.
   async function prepareFile(file,opts={}){
     const isImage = String(file.type||'').toLowerCase().indexOf('image/')===0;
     const shrink  = isImage && opts.shrinkImages!==false;
-    let name = file.name || 'Datei';
+    let name = String(opts.name||'').trim() || file.name || 'Datei';
     let mime = safeMime(file.type,'application/octet-stream');
     let b64  = '';
 
@@ -3605,10 +3613,12 @@
     const errors = [], saved = [];
     for(let n=0;n<list.length;n++){
       const file = list[n].file;
+      const anzeige = list[n].name || file.name || 'Datei';
       const label = list.length>1 ? ('Datei '+(n+1)+' von '+list.length+' · ') : '';
       try{
-        if(onStatus) onStatus(label+'„'+(file.name||'Datei')+'“ wird gelesen …');
-        const prepared = await prepareFile(file,Object.assign({},opts,{path:list[n].path}));
+        if(onStatus) onStatus(label+'„'+anzeige+'“ wird gelesen …');
+        const prepared = await prepareFile(file,
+          Object.assign({},opts,{path:list[n].path, name:list[n].name}));
         await writeFileDoc(docId,prepared,(p)=>{
           if(onStatus) onStatus(label+'„'+prepared.name+'“ wird gespeichert … '+Math.round(p*100)+' %');
         },opts.extra);
@@ -3616,8 +3626,8 @@
       }catch(err){
         console.error(err);
         errors.push(err && err.code
-          ? ('„'+(file.name||'Datei')+'“: '+describeError(err))
-          : ((err && err.message) || ('„'+(file.name||'Datei')+'“ konnte nicht gespeichert werden.')));
+          ? ('„'+anzeige+'“: '+describeError(err))
+          : ((err && err.message) || ('„'+anzeige+'“ konnte nicht gespeichert werden.')));
       }
     }
     const parts = [];
@@ -3681,10 +3691,51 @@
     });
   }
 
-  // Gemeinsame Auswahl für beide Formulare: Einzeldateien, am Rechner
-  // zusätzlich ganze Ordner und ein Ablagebereich. Liefert {file,path}.
+  // Wohin ein ⌘V / Strg+V geht: der zuletzt angefasste Auswahlbereich.
+  // Es können mehrere gleichzeitig auf der Seite stehen (Formular oben und
+  // der Anhang-Bereich eines aufgeklappten Eintrags), deshalb braucht es
+  // einen eindeutigen Empfänger.
+  let aktiverPicker = null;
+
+  // Eine Datei, die NEBEN dem Feld landet, würde der Browser sonst öffnen –
+  // die halb ausgefüllte Eingabe wäre weg. Deshalb einmal fürs ganze Fenster
+  // abfangen; innerhalb eines Auswahlbereichs (.sf-picker) gilt weiter der
+  // eigene Handler.
+  ['dragover','drop'].forEach(typ=>{
+    window.addEventListener(typ,(e)=>{
+      const ziel = e.target;
+      if(ziel && ziel.closest && ziel.closest('.sf-picker')) return;
+      e.preventDefault();
+      if(e.dataTransfer) try{ e.dataTransfer.dropEffect='none'; }catch(err){}
+    });
+  });
+
+  // Eingefügtes heisst systemweit immer gleich („image.png"). Damit sich
+  // mehrere Einfügungen unterscheiden lassen, bekommt es einen Namen mit
+  // Zeitstempel; ein echter Dateiname aus dem Dateiverwalter bleibt stehen.
+  function eingefuegterName(file){
+    const roh = String((file && file.name) || '').trim();
+    if(roh && !/^(image|grafik|bild|blob|unbenannt|untitled)(\.[a-z0-9]+)?$/i.test(roh)) return roh;
+    const d = new Date(), zwei = (x)=>String(x).padStart(2,'0');
+    const stempel = d.getFullYear()+'-'+zwei(d.getMonth()+1)+'-'+zwei(d.getDate())+
+                    '-'+zwei(d.getHours())+zwei(d.getMinutes())+zwei(d.getSeconds());
+    const typ = safeMime(file && file.type,'');
+    let endung = '';
+    if(typ){
+      const unter = typ.split('/')[1].split('+')[0];      // image/svg+xml → svg
+      endung = '.'+(unter==='jpeg' ? 'jpg' : unter);
+    }
+    return 'Eingefügt-'+stempel+endung;
+  }
+
+  // Gemeinsame Auswahl für alle Formulare: Einzeldateien, am Rechner
+  // zusätzlich ganze Ordner, überall Ablegen und Einfügen.
+  // Liefert {file, path, name}.
   function buildFilePicker(){
     let dropped = [];
+    // Bewusst OHNE accept-Attribut: jede Einschränkung lässt der Dateidialog
+    // des Betriebssystems zu einem Filter werden und graut alles andere aus
+    // (auf dem iPhone träfe das z. B. .md). Gefiltert wird hier nichts.
     const fileInput = el('input',{class:'file-input',type:'file',multiple:'multiple'});
     const folderInput = canPickFolders
       ? el('input',{class:'file-input',type:'file',multiple:'multiple',style:'display:none;'})
@@ -3694,6 +3745,7 @@
     const shrinkBox = el('input',{type:'checkbox'});
     shrinkBox.checked = true;
     const summary = el('p',{class:'hg-sub',style:'margin:10px 0 0;'});
+    const box = el('div',{class:'sf-picker'},[fileInput]);
 
     function items(){
       return toItems(fileInput.files)
@@ -3712,54 +3764,141 @@
       if(folderInput) folderInput.value = '';
       paint();
     }
-    fileInput.addEventListener('change',paint);
-    if(folderInput) folderInput.addEventListener('change',paint);
-
-    const box = el('div',{},[fileInput]);
-
-    if(canPickFolders){
-      const zone = el('div',{class:'sf-drop',text:'Dateien oder ganze Ordner hierher ziehen'});
-      zone.addEventListener('dragover',(e)=>{ e.preventDefault(); zone.classList.add('over'); });
-      zone.addEventListener('dragleave',()=>zone.classList.remove('over'));
-      zone.addEventListener('drop',async(e)=>{
-        e.preventDefault();
-        zone.classList.remove('over');
-        summary.textContent = 'Auswahl wird gelesen …';
-        const out = [];
-        const entries = Array.from((e.dataTransfer && e.dataTransfer.items) || [])
-          .map(it=> it.webkitGetAsEntry ? it.webkitGetAsEntry() : null).filter(Boolean);
-        if(entries.length){
-          for(const en of entries) await readDropEntry(en,'',out);
-        }else{
-          Array.from((e.dataTransfer && e.dataTransfer.files) || [])
-            .forEach(f=>out.push({file:f, path:''}));
-        }
-        dropped = dropped.concat(out);
-        paint();
-      });
-      box.appendChild(el('div',{style:'display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;'},[
-        el('button',{class:'pill-btn',type:'button',text:'Ordner wählen',
-          onclick:()=>folderInput.click()}),
-        el('button',{class:'pill-btn',type:'button',text:'Auswahl zurücksetzen',
-          onclick:clear})
-      ]));
-      box.appendChild(folderInput);
-      box.appendChild(zone);
+    // Abgelegtes und Eingefügtes sammelt sich neben der Auswahl des
+    // Dateidialogs an, damit sich beides mischen lässt.
+    function addItems(liste){
+      if(!liste || !liste.length) return 0;
+      dropped = dropped.concat(liste);
+      paint();
+      return liste.length;
     }
+    function addFiles(dateien){
+      return addItems(Array.from(dateien||[])
+        .map(f=>({file:f, path:'', name:eingefuegterName(f)})));
+    }
+    function aktiviere(){ aktiverPicker = api; }
 
+    fileInput.addEventListener('change',()=>{ aktiviere(); paint(); });
+    if(folderInput) folderInput.addEventListener('change',()=>{ aktiviere(); paint(); });
+    box.addEventListener('pointerdown',aktiviere);
+    box.addEventListener('focusin',aktiviere);
+
+    // ── Ablegen ─────────────────────────────────────────────
+    // Auf jedem Gerät, nicht nur am Rechner: auf dem iPad lässt sich aus der
+    // Dateien-App ins Fenster ziehen, und es ist der zuverlässigste Weg an
+    // Dateitypen vorbei, die der Dateidialog nicht anbietet.
+    const zone = el('div',{class:'sf-drop',
+      text: canPickFolders ? 'Dateien oder ganze Ordner hierher ziehen'
+                           : 'Dateien hierher ziehen'});
+    function over(an){ zone.classList.toggle('over',!!an); }
+
+    async function onDrop(e){
+      e.preventDefault();
+      e.stopPropagation();
+      over(false);
+      aktiviere();
+      summary.textContent = 'Auswahl wird gelesen …';
+      const out = [];
+      // Über die Einträge kommen ganze Ordner samt Struktur herein; fehlen
+      // sie (ältere Browser), bleiben wenigstens die einzelnen Dateien.
+      const entries = Array.from((e.dataTransfer && e.dataTransfer.items) || [])
+        .map(it=> it.webkitGetAsEntry ? it.webkitGetAsEntry() : null).filter(Boolean);
+      if(entries.length){
+        for(const en of entries) await readDropEntry(en,'',out);
+      }else{
+        Array.from((e.dataTransfer && e.dataTransfer.files) || [])
+          .forEach(f=>out.push({file:f, path:''}));
+      }
+      if(!out.length){ paint(); return; }
+      addItems(out);
+    }
+    // Das ganze Feld nimmt Dateien an, nicht nur die gestrichelte Fläche.
+    function bindDrop(node){
+      if(!node) return;
+      node.classList.add('sf-picker');   // der Fänger am Fenster lässt es durch
+      node.addEventListener('dragenter',(e)=>{ e.preventDefault(); over(true); });
+      node.addEventListener('dragover', (e)=>{ e.preventDefault(); over(true); });
+      node.addEventListener('dragleave',(e)=>{
+        if(!node.contains(e.relatedTarget)) over(false);
+      });
+      node.addEventListener('drop',onDrop);
+    }
+    bindDrop(box);
+
+    // ── Knopfreihe ──────────────────────────────────────────
+    const btnRow = el('div',{style:'display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;'});
+    if(canPickFolders){
+      btnRow.appendChild(el('button',{class:'pill-btn',type:'button',text:'Ordner wählen',
+        onclick:()=>folderInput.click()}));
+    }
+    // Schnellzugriff auf die Zwischenablage. Nicht jeder Browser gibt sie
+    // her – dann bleibt ⌘V / Strg+V, das immer funktioniert.
+    if(navigator.clipboard && navigator.clipboard.read){
+      const pasteBtn = el('button',{class:'pill-btn',type:'button',text:'Einfügen',
+        title:'Kopierte Datei aus der Zwischenablage übernehmen'});
+      pasteBtn.addEventListener('click',async()=>{
+        aktiviere();
+        pasteBtn.disabled = true;
+        summary.textContent = 'Zwischenablage wird gelesen …';
+        try{
+          const eintraege = await navigator.clipboard.read();
+          const neu = [];
+          for(const eintrag of eintraege){
+            // Reiner Text ist keine Datei – nur alles andere übernehmen.
+            const typ = (eintrag.types||[]).find(t=>t!=='text/plain' && t!=='text/html');
+            if(!typ) continue;
+            const blob = await eintrag.getType(typ);
+            const datei = new File([blob],'Eingefügt',{type:typ});
+            neu.push({file:datei, path:'', name:eingefuegterName({name:'',type:typ})});
+          }
+          if(neu.length) addItems(neu);
+          else summary.textContent = 'In der Zwischenablage liegt keine Datei.';
+        }catch(err){
+          console.error(err);
+          summary.textContent = 'Die Zwischenablage liess sich nicht lesen – '+
+            'stattdessen ⌘V bzw. Strg+V drücken.';
+        }
+        pasteBtn.disabled = false;
+      });
+      btnRow.appendChild(pasteBtn);
+    }
+    btnRow.appendChild(el('button',{class:'pill-btn',type:'button',text:'Auswahl zurücksetzen',
+      onclick:clear}));
+
+    box.appendChild(btnRow);
+    if(folderInput) box.appendChild(folderInput);
+    if(canDropFiles) box.appendChild(zone);
     box.appendChild(el('label',{class:'sf-opt'},[
       shrinkBox,
       el('span',{text:'Bilder auf '+MAX_IMAGE_EDGE+' px verkleinern (empfohlen – spart Platz)'})
     ]));
     box.appendChild(el('p',{class:'hg-sub',style:'margin:8px 0 0;',
-      text:'Höchstens '+fmtBytes(MAX_FILE_BYTES)+' je Datei.'+
-        (canPickFolders ? ' Ordnerstruktur bleibt erhalten.'
-                        : ' Ordner lassen sich auf dem iPhone nicht auswählen – dort mehrere Dateien auf einmal wählen oder den Ordner vorher als ZIP packen.')}));
+      text:'Höchstens '+fmtBytes(MAX_FILE_BYTES)+' je Datei. '+
+        (canPickFolders
+          ? 'Ordnerstruktur bleibt erhalten. Kopierte Dateien und Bildschirmfotos lassen sich mit ⌘V bzw. Strg+V einfügen.'
+          : 'Im Auswahlmenü auf „Dateien auswählen“ tippen – über „Fotomediathek“ erscheinen nur Bilder. '+
+            'Kopiertes lässt sich mit „Einfügen“ übernehmen. Ordner lassen sich hier nicht wählen; '+
+            'mehrere Dateien auf einmal wählen oder den Ordner vorher als ZIP packen.')}));
     box.appendChild(summary);
     paint();
 
-    return {node:box, items, clear, opts:()=>({shrinkImages:shrinkBox.checked})};
+    const api = {node:box, items, clear, addFiles, bindDrop, aktiviere,
+                 opts:()=>({shrinkImages:shrinkBox.checked})};
+    aktiverPicker = api;      // der zuletzt gebaute ist zunächst der aktive
+    return api;
   }
+
+  // ⌘V / Strg+V für den aktiven Auswahlbereich. Einmal fürs Dokument
+  // registriert – ein Handler je Picker würde bei jedem Neuzeichnen einen
+  // weiteren hinterlassen.
+  document.addEventListener('paste',(e)=>{
+    const p = aktiverPicker;
+    if(!p || !p.node.isConnected) return;
+    const dateien = Array.from((e.clipboardData && e.clipboardData.files) || []);
+    if(!dateien.length) return;      // reiner Text gehört weiter ins Textfeld
+    e.preventDefault();
+    p.addFiles(dateien);
+  });
 
   // ── Formular: neuer Eintrag ───────────────────────────────
   function buildFilesForm(){
@@ -3781,6 +3920,7 @@
       el('div',{class:'sp-form-actions'},[btn]),
       status
     ]);
+    picker.bindDrop(form);      // nicht nur die gestrichelte Fläche
 
     form.addEventListener('submit',async(e)=>{
       e.preventDefault();
@@ -3819,9 +3959,10 @@
   // „docId" darf auch eine Funktion sein, die die Ziel-ID erst beim Speichern
   // liefert (und dabei bei Bedarf anlegt) – so braucht eine App-Idee ohne
   // Dateien noch keinen leeren Ablage-Eintrag.
-  // opts.extra    → zusätzliche Felder je Datei (z. B. {appIdeaId})
-  // opts.label    → Beschriftung des Auswahlfeldes
-  // opts.onSaved  → wird nach dem Speichern mit (ergebnis, docId) aufgerufen
+  // opts.extra      → zusätzliche Felder je Datei (z. B. {appIdeaId})
+  // opts.label      → Beschriftung des Auswahlfeldes
+  // opts.onSaved    → wird nach dem Speichern mit (ergebnis, docId) aufgerufen
+  // opts.dropTarget → zusätzliche Fläche, die Dateien annimmt (z. B. das Popup)
   function buildFileAdder(docId,opts={}){
     const picker = buildFilePicker();
     const btn    = el('button',{class:'btn small',type:'button',text:'Dateien hinzufügen'});
@@ -3856,7 +3997,7 @@
       btn.disabled=false;
     });
 
-    return el('div',{class:'sf-add'},[
+    const box = el('div',{class:'sf-add'},[
       el('div',{class:'field',style:'margin-bottom:12px;'},[
         el('label',{text:opts.label||'Weitere Dateien anhängen'}),
         picker.node
@@ -3864,6 +4005,9 @@
       btn,
       status
     ]);
+    picker.bindDrop(box);
+    picker.bindDrop(opts.dropTarget);
+    return box;
   }
 
   // ── Was lässt sich in der App anzeigen? ───────────────────
@@ -4373,6 +4517,7 @@
     modal.appendChild(buildFileAdder(()=>ensureIdeaEntry(ideaId, ideaData && ideaData.text),{
       label:'Dateien zu dieser Idee hinzufügen',
       extra:{appIdeaId:ideaId},
+      dropTarget:modal,          // irgendwo ins Popup ziehen genügt
       onSaved:(res,ziel)=>refreshIdeaLinkCount(ziel,ideaId)
     }));
 

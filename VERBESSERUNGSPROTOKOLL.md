@@ -2,6 +2,42 @@
 
 Chronik der Änderungen an der App – neueste Einträge oben.
 
+## 2026-08-18 · Dateien ablegen und einfügen
+
+**Beschreibung**
+
+Nachbesserung zum Dateien-Bereich: `.md`-Dateien liessen sich schwer
+hinzufügen. Am Speichern lag es nicht – der Weg dorthin nimmt jeden Dateityp
+an und filtert nichts (am Datei-Input steht bewusst kein `accept`). Es
+scheiterte am Dateidialog des Geräts. Deshalb gibt es jetzt zwei Wege daran
+vorbei, und der Auswahlbereich wurde grosszügiger:
+
+- **Ablegen überall**: Die Fläche erscheint nicht mehr nur am Rechner,
+  sondern auf jedem Gerät ausser dem iPhone (`canDropFiles`) – das iPad kann
+  aus der Dateien-App ins Fenster ziehen, obwohl es keine Ordner auswählen
+  darf. Ziel ist ausserdem nicht mehr nur das gestrichelte Rechteck: das
+  ganze Formular bzw. das ganze App-Idee-Popup nimmt Dateien an.
+- **Einfügen**: ⌘V bzw. Strg+V übernimmt kopierte Dateien und
+  Bildschirmfotos direkt in die Auswahl; daneben gibt es den Knopf
+  „Einfügen“ für Browser, die die Zwischenablage hergeben. Reiner Text wird
+  nicht abgefangen und landet weiter im Textfeld. Eingefügtes heisst
+  systemweit immer „image.png“ und bekommt deshalb einen Namen mit
+  Zeitstempel.
+- **Nichts geht mehr verloren**: Eine neben dem Feld abgelegte Datei öffnete
+  bisher der Browser – die halb ausgefüllte Eingabe war weg. Ein Fänger am
+  Fenster verhindert das.
+- Auf dem iPhone steht jetzt im Hinweis, dass im Auswahlmenü „Dateien
+  auswählen“ zu tippen ist – über „Fotomediathek“ erscheinen nur Bilder.
+
+**Geänderte Dateien**
+
+- `index.html` – `buildFilePicker()` neu (Ablegen, Einfügen, `bindDrop`,
+  `aktiverPicker`), `canDropFiles`, `eingefuegterName()`, Fänger am `window`,
+  `opts.name` in `prepareFile`/`storeFiles`, `dropTarget` in
+  `buildFileAdder`
+- `CLAUDE.md` – Abschnitt „Gespeicherte Dateien“ nachgezogen
+- `VERBESSERUNGSPROTOKOLL.md` – dieser Eintrag
+
 ## 2026-08-18 · Dateien direkt an einer App-Idee
 
 **Beschreibung**
