@@ -2,6 +2,51 @@
 
 Chronik der Änderungen an der App – neueste Einträge oben.
 
+## 2026-08-18 · Dateien direkt an einer App-Idee
+
+**Beschreibung**
+
+Jede App-Idee hat neben „Konzept“ und „Prompt“ jetzt einen dritten Knopf
+**„Dateien“** – gleiche Optik, gleiches Muster (Pill-Button ⇒ Popup). Dort
+lassen sich Bilder, Texte, Code und ganze Ordner ablegen, mit derselben
+Auswahl, denselben Grenzen und denselben Fehlermeldungen wie in der Kategorie
+„Dateien“.
+
+- **Eine Ablage, kein zweiter Speicher.** Die Dateien landen in einem ganz
+  normalen `savedFiles`-Eintrag und erscheinen dadurch automatisch in der
+  Kategorie „Dateien“. Nichts wird kopiert oder doppelt gespeichert; beide
+  Ansichten lesen dieselben Dokumente. Die Zuordnung ist ein Feld:
+  `appIdeaId` am Eintrag und an jeder Datei.
+- **Erkennbar in der Ablage:** Der Eintrag trägt unter dem Titel ein
+  Kennzeichen „💡 App-Idee · <Ideentext>“. An den einzelnen Zeilen wird es
+  nicht wiederholt – dort steht nur etwas, wenn es abweicht (z. B. „⊖ nicht
+  mehr zugeordnet“). Der Ideentext erscheint nur bei entsperrter Sitzung,
+  sonst bleibt es beim neutralen „💡 App-Idee“: der Zugangscode gilt weiter.
+- **Zwei klar getrennte Aktionen** in der Idee: „⊖ Aus Idee entfernen“ löst
+  nur die Zuordnung (die Datei bleibt in „Dateien“), „🗑 Endgültig löschen“
+  löscht überall – mit deutlicher Rückfrage.
+- **Eine App-Idee zu löschen löscht keine Dateien.** `unlinkIdeaFiles()` löst
+  nur die Verknüpfungen; der Bestätigungstext sagt das ausdrücklich.
+- Umgekehrt wirkt das Löschen in „Dateien“ sofort auch in der Idee – es gibt
+  keine verwaisten Verknüpfungen, weil der Eintrag über eine Abfrage gefunden
+  und nicht als ID an der Idee gespeichert wird.
+- **Neu für beide Bereiche:** eine Vorschau. Bilder gross (auch per Klick aufs
+  Vorschaubild), `.md` gerendert, andere Textdateien lesbar, alles Übrige mit
+  Name, Grösse, Typ und Herunterladen.
+
+**Geänderte Dateien**
+
+- `index.html` – Abschnitt „DATEIEN EINER APP-IDEE“ (`ensureIdeaEntry`,
+  `refreshIdeaLinkCount`, `unlinkIdeaFiles`, `openIdeaFilesModal`),
+  `openFilePreview()` + `renderMarkdown()`, `buildFileRow`/`paintFileList`/
+  `buildFileAdder`/`writeFileDoc` um Vorschau, Kennzeichen und Zusatzfelder
+  erweitert, dritter Knopf in `buildIdeaItem()`, CSS für Kennzeichen,
+  Vorschau und Markdown
+- `CLAUDE.md` – neuer Abschnitt „Dateien einer App-Idee“
+- `VERBESSERUNGSPROTOKOLL.md` – dieser Eintrag
+
+**Firestore-Regeln:** unverändert – es kam keine neue Collection dazu.
+
 ## 2026-08-11 · Code einmal pro Sitzung statt pro Bereich
 
 **Beschreibung**

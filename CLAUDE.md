@@ -30,6 +30,8 @@ Sprache der UI und aller Texte/Kommentare: **Deutsch**.
 - Firestore-Collections: `projects` (+ Subcollection `entries`), `appIdeas`,
   `savedPrompts`, `todos`, `savedFiles` (+ `files` + `parts`), `pushTokens`,
   `settings`, Legacy: `verbesserungsprotokoll`
+  (Dateien einer App-Idee liegen ebenfalls in `savedFiles` – keine eigene
+  Collection, siehe Abschnitt „Dateien einer App-Idee")
 - Auth: Firebase Auth, Zugriff nur für eine Owner-UID (siehe firestore.rules).
   Der apiKey im Code ist öffentlich und KEIN Geheimnis – Sicherheit kommt
   ausschliesslich aus den Rules. Nicht "verstecken" wollen.
@@ -110,6 +112,42 @@ Sprache der UI und aller Texte/Kommentare: **Deutsch**.
 - Ordner: `webkitdirectory` und Drag & Drop gibt es nur am Rechner
   (`canPickFolders`). iOS Safari kann beides nicht – dort die Bedienelemente
   ausblenden statt tote Schalter zu zeigen.
+- Vorschau: `openFilePreview()` zeigt Bilder gross, Textdateien lesbar und
+  `.md` über `renderMarkdown()` gerendert. Der Markdown-Darsteller baut
+  ausschliesslich über `el()` – aus einer Datei darf NIE HTML eingesetzt
+  werden. Welche Datei anzeigbar ist, entscheiden `isImageFile()` und
+  `isTextFile()` (MIME zuerst, sonst die Endung aus `TEXT_EXTS`).
+
+## Dateien einer App-Idee (Abschnitt „DATEIEN EINER APP-IDEE")
+
+- Es gibt **einen** Datensatz je Datei. Dateien einer App-Idee liegen in
+  einem ganz normalen `savedFiles`-Eintrag und tauchen deshalb von selbst in
+  der Kategorie „Dateien" auf. **Niemals kopieren oder doppelt speichern** –
+  beide Ansichten lesen dieselben Dokumente.
+- Die Zuordnung ist ein Feld: der Eintrag trägt `appIdeaId`, `appIdeaTitle`
+  und `linkedCount`, jedes Datei-Dokument trägt `appIdeaId`. Massgeblich für
+  die Anzeige in der Idee ist ausschliesslich das Feld am **Datei**-Dokument.
+- Je Idee gibt es höchstens einen Eintrag. Gefunden wird er über eine Abfrage
+  (`ideaEntryQuery`), nicht über eine am Idee-Dokument gespeicherte ID – so
+  kann keine verwaiste Verknüpfung entstehen, wenn der Eintrag in „Dateien"
+  gelöscht wird. Angelegt wird er erst beim ersten Speichern
+  (`ensureIdeaEntry`), damit keine leeren Einträge herumstehen.
+- **Zwei getrennte Aktionen, die nicht verschmelzen dürfen:** „Aus Idee
+  entfernen" leert nur `appIdeaId` am Datei-Dokument – die Datei bleibt in
+  der Ablage. „Endgültig löschen" ruft `deleteFileDoc()` und löscht überall;
+  davor eine Bestätigung, die das ausdrücklich sagt.
+- Beim Löschen einer App-Idee räumt `unlinkIdeaFiles()` nur die Verknüpfungen
+  ab. Die Dateien bleiben – die Ablage ist das zentrale Archiv. Der
+  Bestätigungstext sagt das dem Nutzer.
+- `linkedCount` steuert nur den Punkt am Knopf „Dateien" und wird über
+  `refreshIdeaLinkCount()` mit `getCountFromServer` nachgezogen (zählt, ohne
+  die grossen Datei-Dokumente zu lesen). Schlägt das fehl, ist höchstens der
+  Punkt falsch – nie die eigentliche Aktion.
+- Der Ideentext steht hinter dem Zugangscode. In der Ablage schreibt
+  `ideaBadgeText()` ihn deshalb nur aus, wenn `codeEntsperrt` gilt; sonst
+  bleibt es beim neutralen „💡 App-Idee".
+- Einträge und Dateien ohne diese Felder sind Altbestand und laufen
+  unverändert weiter. Keine Migration.
 
 ## Benachrichtigungen (Abschnitt „EINSTELLUNGEN")
 

@@ -619,6 +619,64 @@
     accent-color:var(--brass);
     cursor:pointer;
   }
+  /* Kennzeichen „gehört zu einer App-Idee“ in der Ablage */
+  .sf-badge{
+    display:inline-block;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:10.5px;letter-spacing:.05em;line-height:1.4;
+    color:var(--brass);
+    border:1px solid var(--brass-dim);
+    border-radius:3px;
+    padding:2px 7px;
+    margin-top:6px;
+    word-break:break-word;
+  }
+  /* eigene Zeile, damit das Kennzeichen nicht neben dem Aufklapp-Knopf klebt */
+  .sf-title-badge{margin:0 0 10px;}
+  /* Datei, die aus ihrer App-Idee genommen wurde: derselbe Bau, aber still */
+  .sf-badge.off{color:var(--paper-text-dim);border-color:var(--hairline);}
+
+  /* Datei-Vorschau im Popup */
+  .fp-img{
+    display:block;max-width:100%;max-height:62vh;margin:0 auto;
+    border-radius:4px;background:var(--ink-bg);
+  }
+  .fp-text{
+    max-height:58vh;overflow:auto;
+    background:var(--ink-bg);border:1px solid var(--hairline);border-radius:4px;
+    padding:16px;
+    font-family:'IBM Plex Mono',monospace;font-size:13px;line-height:1.6;
+    white-space:pre-wrap;word-break:break-word;
+  }
+  /* Gerendertes Markdown (.md-Dateien) */
+  .md-body{max-height:58vh;overflow:auto;font-size:14.5px;line-height:1.65;word-break:break-word;}
+  .md-body > *:first-child{margin-top:0;}
+  .md-body h1,.md-body h2,.md-body h3,.md-body h4{
+    font-family:'Fraunces',serif;font-weight:500;line-height:1.3;margin:22px 0 10px;
+  }
+  .md-body h1{font-size:22px;}
+  .md-body h2{font-size:19px;}
+  .md-body h3{font-size:16.5px;}
+  .md-body h4{font-size:15px;}
+  .md-body p{margin:0 0 12px;}
+  .md-body ul,.md-body ol{margin:0 0 12px;padding-left:22px;}
+  .md-body li{margin:4px 0;}
+  .md-body code{
+    font-family:'IBM Plex Mono',monospace;font-size:12.5px;
+    background:var(--ink-bg);padding:1px 5px;border-radius:3px;
+  }
+  .md-body pre{
+    background:var(--ink-bg);border:1px solid var(--hairline);border-radius:4px;
+    padding:14px;overflow-x:auto;margin:0 0 14px;
+  }
+  .md-body pre code{background:none;padding:0;font-size:12.5px;line-height:1.55;}
+  .md-body blockquote{
+    margin:0 0 12px;padding:2px 0 2px 14px;
+    border-left:2px solid var(--brass-dim);color:var(--paper-text-dim);
+  }
+  .md-body hr{border:none;border-top:1px solid var(--hairline);margin:20px 0;}
+  .md-body a{color:var(--brass);}
+  .md-body strong{font-weight:600;}
 
   /* To-dos */
   .todo-item{
@@ -651,6 +709,9 @@
   .pill-btn.has{color:var(--brass);border-color:var(--brass-dim);}
 
   .pill-btn.locked{color:var(--brass);border-color:var(--brass-dim);}
+  /* Zweitrangige, nicht umkehrbare Aktion (endgültig löschen) */
+  .pill-btn.danger{color:var(--danger);border-color:var(--danger);}
+  .pill-btn.danger:hover{color:#f4efe9;background:var(--danger);border-color:var(--danger);}
 
   /* Projektsperre: Schalter in der Kopfzeile, Schirm vor dem Projekt */
   .lock-bar{margin-top:18px;}
@@ -1393,6 +1454,10 @@
   let todosCache = [];         // To-dos, nach order sortiert
   let promptsCache = [];       // gespeicherte Prompts, nach order sortiert
   let savedFilesCache = [];    // gespeicherte Dateien, nach order sortiert
+  // Zu jeder App-Idee ihr Ablage-Eintrag in savedFiles (siehe Abschnitt
+  // „DATEIEN EINER APP-IDEE"). Nur auf der App-Ideen-Seite gefüllt – damit
+  // der Knopf „Dateien" denselben Punkt zeigen kann wie Konzept und Prompt.
+  let ideaEntriesCache = new Map();
   let signedIn = false;        // wird vom Auth-Gate am Dateiende gesetzt
   // Gerätelokaler Entsperr-Zustand für ALLES hinter dem Code: App-Ideen und
   // verschlossene Projekte. Einmal eingegeben, ist für diese Sitzung auf
@@ -1510,6 +1575,12 @@
       ok(){ dot.classList.remove('offline'); text.textContent='Verbunden · Live-Synchronisierung aktiv'; },
       fail(err){ console.error(err); dot.classList.add('offline'); text.textContent=describeError(err); }
     };
+  }
+  // Popups können sich stapeln (Datei-Vorschau über der Dateiliste einer
+  // Idee). Escape darf dann nur das oberste schliessen.
+  function isTopOverlay(overlay){
+    const alle = document.querySelectorAll('.modal-overlay');
+    return alle.length===0 || alle[alle.length-1]===overlay;
   }
   function buildFooter(){
     return el('footer',{text:'Alle Änderungen werden automatisch über die Datenbank synchronisiert und dauerhaft gespeichert.'});
@@ -2614,6 +2685,32 @@
   }
 
   function subscribeIdeas(container,status){
+    let liste = [];          // zuletzt geladene Ideen, schon sortiert
+    let geladen = false;     // erst nach dem ersten Schnappschuss zeichnen
+
+    function paint(){
+      container.innerHTML='';
+      if(liste.length===0){
+        container.appendChild(el('p',{class:'empty',text:'Noch keine Ideen – schreib deine erste oben hinein.'}));
+        return;
+      }
+      liste.forEach((d,i)=> container.appendChild(buildIdeaItem(d.id,d,i,liste.length)));
+    }
+
+    // Zuordnung Idee → Ablage-Eintrag. Damit weiss der Knopf „Dateien", ob es
+    // schon welche gibt – genau wie der Punkt bei Konzept und Prompt.
+    // Die Ungleichung blendet alle Einträge ohne das Feld aus, also den
+    // gesamten Altbestand der Kategorie „Dateien".
+    track(onSnapshot(query(savedFilesRef, where('appIdeaId','>','')),(snap)=>{
+      ideaEntriesCache = new Map();
+      snap.docs.forEach(d=>{
+        const v = d.data()||{};
+        if(v.appIdeaId) ideaEntriesCache.set(String(v.appIdeaId),
+          {id:d.id, linkedCount:Number(v.linkedCount||0)});
+      });
+      if(geladen) paint();
+    },(err)=>console.error(err)));
+
     // Nach createdAt (neu→alt) abfragen – das ist auch die Alt-Anzeige­reihenfolge,
     // anhand derer fehlende order-Werte einmalig initialisiert werden.
     const q = query(ideasRef, orderBy('createdAt','desc'));
@@ -2636,14 +2733,11 @@
       // Aufsteigend nach order sortieren (kleinster Wert = oben).
       docs.sort((a,b)=> (a.order??0) - (b.order??0));
       ideasCache = docs;
+      liste = docs;
+      geladen = true;
 
       if(status) status.ok();
-      container.innerHTML='';
-      if(docs.length===0){
-        container.appendChild(el('p',{class:'empty',text:'Noch keine Ideen – schreib deine erste oben hinein.'}));
-        return;
-      }
-      docs.forEach((d,i)=> container.appendChild(buildIdeaItem(d.id,d,i,docs.length)));
+      paint();
     },(err)=>{ if(status) status.fail(err); else console.error(err); }));
   }
 
@@ -2678,21 +2772,37 @@
     actions.appendChild(move);
     const hasConcept = !!(data.concept && data.concept.trim());
     const hasPrompt  = !!(data.prompt && data.prompt.trim());
+    const hasFiles   = ideaHasFiles(id);
     const conceptBtn = el('button',{class:'pill-btn'+(hasConcept?' has':''),title:'Konzept anzeigen / bearbeiten',
       text:(hasConcept?'● ':'')+'Konzept'});
     const promptBtn  = el('button',{class:'pill-btn'+(hasPrompt?' has':''),title:'Prompt anzeigen / bearbeiten',
       text:(hasPrompt?'● ':'')+'Prompt'});
+    const filesBtn   = el('button',{class:'pill-btn'+(hasFiles?' has':''),title:'Dateien zu dieser Idee',
+      text:(hasFiles?'● ':'')+'Dateien'});
     conceptBtn.addEventListener('click',()=>openCpModal(doc(db,'appIdeas',id),data,'concept'));
     promptBtn.addEventListener('click',()=>openCpModal(doc(db,'appIdeas',id),data,'prompt'));
+    filesBtn.addEventListener('click',()=>openIdeaFilesModal(id,data));
     const editBtn = el('button',{class:'row-btn',title:'Bearbeiten',text:'✎',style:'opacity:.85;'});
     const delBtn  = el('button',{class:'row-btn del',title:'Löschen',text:'✕',style:'opacity:.85;'});
-    actions.appendChild(conceptBtn); actions.appendChild(promptBtn);
+    actions.appendChild(conceptBtn); actions.appendChild(promptBtn); actions.appendChild(filesBtn);
     actions.appendChild(editBtn); actions.appendChild(delBtn);
     foot.appendChild(actions);
 
     delBtn.addEventListener('click',async()=>{
-      if(!confirm('Diese App-Idee löschen?')) return;
-      try{ await deleteDoc(doc(db,'appIdeas',id)); }catch(err){ console.error(err); alert('Konnte nicht gelöscht werden.'); }
+      // Die Dateien gehören zur zentralen Ablage und bleiben dort stehen –
+      // gelöst wird nur ihre Zuordnung zu dieser Idee.
+      if(!confirm('Diese App-Idee löschen?\n\n'+
+        'Angehängte Dateien bleiben erhalten: sie stehen weiterhin in der Kategorie '+
+        '„Dateien“ und verlieren lediglich die Zuordnung zu dieser Idee.')) return;
+      delBtn.disabled = true;
+      try{
+        await unlinkIdeaFiles(id);                 // erst die Verknüpfungen lösen …
+        await deleteDoc(doc(db,'appIdeas',id));    // … dann die Idee selbst
+      }catch(err){
+        console.error(err);
+        alert('Konnte nicht gelöscht werden. '+describeError(err));
+        delBtn.disabled = false;
+      }
     });
 
     editBtn.addEventListener('click',()=>{
@@ -2706,7 +2816,16 @@
       save.addEventListener('click',async()=>{
         const val = ta.value.trim(); if(!val) return;
         save.disabled=true;
-        try{ await updateDoc(doc(db,'appIdeas',id),{text:val,updatedAt:serverTimestamp()}); }
+        try{
+          await updateDoc(doc(db,'appIdeas',id),{text:val,updatedAt:serverTimestamp()});
+          // Kennzeichen in der Ablage nachziehen, damit dort der aktuelle
+          // Ideentext steht. Schlägt es fehl, ist nur das Kennzeichen alt.
+          const eintrag = ideaEntriesCache.get(id);
+          if(eintrag){
+            updateDoc(doc(db,'savedFiles',eintrag.id),{appIdeaTitle:ideaSnippet(val)})
+              .catch(e=>console.error(e));
+          }
+        }
         catch(err){ console.error(err); alert('Konnte nicht gespeichert werden.'); save.disabled=false; }
       });
     });
@@ -3249,6 +3368,11 @@
   //                                          createdAt, updatedAt }
   //    savedFiles/{docId}/files/{fileId} → { name, mime, size, data, createdAt }
   //
+  //  Dateien einer App-Idee liegen in genau derselben Ablage – sie tragen
+  //  lediglich zusätzlich das Feld appIdeaId (siehe Abschnitt „DATEIEN
+  //  EINER APP-IDEE" weiter unten). Es gibt bewusst KEINE zweite Ablage
+  //  und KEINE Kopie: beide Ansichten lesen dieselben Dokumente.
+  //
   //  „data“ ist der reine Base64-Inhalt (ohne data:-Präfix), „size“ die
   //  Rohgrösse in Bytes. Die Anhänge liegen bewusst in einer Subcollection:
   //  so gilt das 1-MB-Limit von Firestore je Datei statt für den ganzen
@@ -3412,12 +3536,13 @@
   // Schreibt eine vorbereitete Datei. Passt der Inhalt in ein Dokument,
   // landet er wie bisher im data-Feld (chunks: 0). Sonst kommen die
   // Teilstücke in die parts-Subcollection und chunks hält ihre Anzahl fest.
-  async function writeFileDoc(docId,prepared,onProgress){
+  // „extra" legt zusätzliche Felder an das Datei-Dokument (z. B. appIdeaId).
+  async function writeFileDoc(docId,prepared,onProgress,extra){
     const b64 = prepared.b64;
-    const meta = {
+    const meta = Object.assign({
       name:prepared.name, mime:prepared.mime, size:prepared.size,
       path:prepared.path||'', thumb:prepared.thumb||'', createdAt:serverTimestamp()
-    };
+    }, (extra && typeof extra==='object') ? extra : {});
     if(b64.length <= CHUNK_CHARS){
       await addDoc(filesSubRef(docId), Object.assign({},meta,{data:b64, chunks:0}));
       if(onProgress) onProgress(1);
@@ -3486,7 +3611,7 @@
         const prepared = await prepareFile(file,Object.assign({},opts,{path:list[n].path}));
         await writeFileDoc(docId,prepared,(p)=>{
           if(onStatus) onStatus(label+'„'+prepared.name+'“ wird gespeichert … '+Math.round(p*100)+' %');
-        });
+        },opts.extra);
         saved.push(prepared.name);
       }catch(err){
         console.error(err);
@@ -3691,7 +3816,13 @@
   }
 
   // ── Dateien nachträglich anhängen ─────────────────────────
-  function buildFileAdder(docId){
+  // „docId" darf auch eine Funktion sein, die die Ziel-ID erst beim Speichern
+  // liefert (und dabei bei Bedarf anlegt) – so braucht eine App-Idee ohne
+  // Dateien noch keinen leeren Ablage-Eintrag.
+  // opts.extra    → zusätzliche Felder je Datei (z. B. {appIdeaId})
+  // opts.label    → Beschriftung des Auswahlfeldes
+  // opts.onSaved  → wird nach dem Speichern mit (ergebnis, docId) aufgerufen
+  function buildFileAdder(docId,opts={}){
     const picker = buildFilePicker();
     const btn    = el('button',{class:'btn small',type:'button',text:'Dateien hinzufügen'});
     const status = el('p',{class:'hg-status',style:'display:none;'});
@@ -3706,7 +3837,19 @@
       btn.disabled=true;
       status.style.display=''; status.className='hg-status';
       status.textContent='Dateien werden verarbeitet …';
-      const res = await storeFiles(docId,list,picker.opts(),(m)=>{ status.textContent=m; });
+      let res;
+      try{
+        const ziel = (typeof docId==='function') ? await docId() : docId;
+        res = await storeFiles(ziel,list,Object.assign({},picker.opts(),{extra:opts.extra||null}),
+          (m)=>{ status.textContent=m; });
+        if(opts.onSaved){ try{ await opts.onSaved(res,ziel); }catch(e){ console.error(e); } }
+      }catch(err){
+        console.error(err);
+        status.className='hg-status err';
+        status.textContent=describeError(err);
+        btn.disabled=false;
+        return;
+      }
       picker.clear();
       status.className='hg-status'+(res.errors.length?' err':' ok');
       status.textContent=res.message;
@@ -3715,7 +3858,7 @@
 
     return el('div',{class:'sf-add'},[
       el('div',{class:'field',style:'margin-bottom:12px;'},[
-        el('label',{text:'Weitere Dateien anhängen'}),
+        el('label',{text:opts.label||'Weitere Dateien anhängen'}),
         picker.node
       ]),
       btn,
@@ -3723,10 +3866,227 @@
     ]);
   }
 
+  // ── Was lässt sich in der App anzeigen? ───────────────────
+  // MIME zuerst, sonst die Endung: Code- und Textdateien kommen je nach
+  // Gerät ganz ohne oder mit falschem MIME-Typ an.
+  const TEXT_EXTS = ['txt','md','markdown','json','csv','tsv','log','ini','toml','yml','yaml',
+    'xml','html','htm','css','scss','less','js','mjs','cjs','jsx','ts','tsx','vue','svelte',
+    'py','rb','go','rs','java','kt','swift','c','h','cpp','hpp','cs','php','sh','bash','zsh',
+    'sql','env','gitignore','rules','conf','cfg','plist','srt','tex','r','lua','pl','dart'];
+  function fileExt(name){
+    const m = /\.([A-Za-z0-9_+-]+)$/.exec(String(name||''));
+    return m ? m[1].toLowerCase() : '';
+  }
+  function isImageFile(f){ return safeMime(f&&f.mime,'').indexOf('image/')===0; }
+  function isTextFile(f){
+    const mime = safeMime(f&&f.mime,'');
+    if(mime.indexOf('image/')===0) return false;
+    if(mime.indexOf('text/')===0) return true;
+    if(/^application\/(json|xml|javascript|x-javascript|x-sh|sql|toml|yaml|x-yaml)$/.test(mime)) return true;
+    return TEXT_EXTS.indexOf(fileExt(f&&f.name))>=0;
+  }
+  function isMarkdownFile(f){
+    const e = fileExt(f&&f.name);
+    return e==='md' || e==='markdown';
+  }
+
+  // ── Markdown lesbar darstellen ────────────────────────────
+  // Bewusst klein gehalten: Überschriften, Listen, Zitate, Code (auch als
+  // Block), Trennlinien, fett/kursiv und Links. Gebaut wird ausschliesslich
+  // über el() – aus einer Datei wird NIE HTML eingesetzt, ihr Inhalt landet
+  // immer als Text im DOM.
+  function safeLinkUrl(u){
+    const t = String(u||'').trim();
+    return /^(https?:\/\/|mailto:)/i.test(t) ? t : '';
+  }
+  function mdInline(text){
+    const out = [];
+    let rest = String(text||'');
+    let schutz = 0;
+    // Code zuerst: darin gilt keine weitere Auszeichnung.
+    const re = /`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|\*\*([^*]+)\*\*|__([^_]+)__|\*([^*]+)\*|_([^_]+)_/;
+    while(rest && schutz++ < 5000){
+      const m = re.exec(rest);
+      if(!m){ out.push(document.createTextNode(rest)); break; }
+      if(m.index>0) out.push(document.createTextNode(rest.slice(0,m.index)));
+      if(m[1]!=null){
+        out.push(el('code',{text:m[1]}));
+      }else if(m[2]!=null){
+        const url = safeLinkUrl(m[3]);
+        out.push(url
+          ? el('a',{href:url,target:'_blank',rel:'noopener noreferrer',text:m[2]})
+          : document.createTextNode(m[0]));
+      }else if(m[4]!=null){ out.push(el('strong',{text:m[4]}));
+      }else if(m[5]!=null){ out.push(el('strong',{text:m[5]}));
+      }else if(m[6]!=null){ out.push(el('em',{text:m[6]}));
+      }else if(m[7]!=null){ out.push(el('em',{text:m[7]})); }
+      rest = rest.slice(m.index + m[0].length);
+    }
+    return out;
+  }
+  function renderMarkdown(text){
+    const body  = el('div',{class:'md-body'});
+    const lines = String(text||'').replace(/\r\n?/g,'\n').split('\n');
+    const istListe  = (z)=>/^\s{0,3}([-*+])\s+/.test(z) || /^\s{0,3}\d+[.)]\s+/.test(z);
+    const istTrenn  = (z)=>/^\s{0,3}(-{3,}|\*{3,}|_{3,})\s*$/.test(z);
+    const istTitel  = (z)=>/^\s{0,3}#{1,6}\s/.test(z);
+    const istZitat  = (z)=>/^\s{0,3}>\s?/.test(z);
+    const istZaun   = (z)=>/^\s*```/.test(z);
+    let i = 0;
+    while(i < lines.length){
+      const zeile = lines[i];
+      if(istZaun(zeile)){
+        const buf = []; i++;
+        while(i<lines.length && !/^\s*```\s*$/.test(lines[i])){ buf.push(lines[i]); i++; }
+        i++;                                   // schliessende Zaunzeile
+        body.appendChild(el('pre',{},[el('code',{text:buf.join('\n')})]));
+        continue;
+      }
+      if(/^\s*$/.test(zeile)){ i++; continue; }
+      if(istTrenn(zeile)){ body.appendChild(el('hr')); i++; continue; }
+      const t = /^\s{0,3}(#{1,6})\s+(.*)$/.exec(zeile);
+      if(t){
+        body.appendChild(el('h'+Math.min(4,t[1].length),{},mdInline(t[2].trim())));
+        i++; continue;
+      }
+      if(istZitat(zeile)){
+        const buf = [];
+        while(i<lines.length && istZitat(lines[i])){ buf.push(lines[i].replace(/^\s{0,3}>\s?/,'')); i++; }
+        body.appendChild(el('blockquote',{},[el('p',{},mdInline(buf.join(' ')))]));
+        continue;
+      }
+      if(istListe(zeile)){
+        const nummeriert = /^\s{0,3}\d+[.)]\s+/.test(zeile);
+        const liste = el(nummeriert?'ol':'ul');
+        const punkt = nummeriert ? /^\s{0,3}\d+[.)]\s+(.*)$/ : /^\s{0,3}[-*+]\s+(.*)$/;
+        while(i<lines.length){
+          const m = punkt.exec(lines[i]);
+          if(!m) break;
+          const teile = [m[1]];
+          i++;
+          // Fortsetzungszeilen desselben Punktes einsammeln
+          while(i<lines.length && !/^\s*$/.test(lines[i]) && !istListe(lines[i])
+                && !istTitel(lines[i]) && !istZaun(lines[i]) && !istZitat(lines[i])){
+            teile.push(lines[i].trim()); i++;
+          }
+          liste.appendChild(el('li',{},mdInline(teile.join(' '))));
+        }
+        body.appendChild(liste);
+        continue;
+      }
+      const buf = [];
+      while(i<lines.length && !/^\s*$/.test(lines[i]) && !istZaun(lines[i]) && !istTitel(lines[i])
+            && !istListe(lines[i]) && !istZitat(lines[i]) && !istTrenn(lines[i])){
+        buf.push(lines[i].trim()); i++;
+      }
+      if(buf.length) body.appendChild(el('p',{},mdInline(buf.join(' '))));
+      else i++;                                // Sicherheitsnetz gegen Endlosschleife
+    }
+    return body;
+  }
+
+  // ── Vorschau einer einzelnen Datei ────────────────────────
+  // Bilder gross, Textdateien lesbar (Markdown gerendert), alles andere mit
+  // Name, Grösse, Typ und dem Knopf zum Herunterladen.
+  const MAX_PREVIEW_CHARS = 400000;   // darüber wird der Text gekürzt gezeigt
+
+  function base64ToText(b64){
+    const bin = atob(String(b64||''));
+    const bytes = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder('utf-8').decode(bytes);
+  }
+
+  function openFilePreview(docId,fileId,f){
+    const name = f.name || 'Datei';
+    const mime = safeMime(f.mime,'application/octet-stream');
+    const overlay = el('div',{class:'modal-overlay'});
+    const modal   = el('div',{class:'modal wide'});
+    overlay.appendChild(modal);
+
+    const dlBtn = el('button',{class:'btn cp-copy-head',type:'button',
+      title:'Datei herunterladen','aria-label':'Datei herunterladen'},[
+      el('span',{class:'cp-copy-ico','aria-hidden':'true',text:'⤓'}),
+      el('span',{class:'cp-copy-txt',text:'Herunterladen'})
+    ]);
+    dlBtn.addEventListener('click',()=>downloadFile(docId,fileId,f,dlBtn));
+
+    modal.appendChild(el('div',{class:'cp-head'},[ el('h2',{text:'Vorschau'}), dlBtn ]));
+    modal.appendChild(el('div',{class:'cp-meta',
+      text:name+' · '+fmtBytes(f.size)+' · '+mime+(f.path ? ' · 📁 '+f.path : '')}));
+
+    const body = el('div');
+    body.appendChild(el('p',{class:'hg-sub',style:'margin:0;',text:'Inhalt wird geladen …'}));
+    modal.appendChild(body);
+
+    let closed = false;
+    function close(){
+      closed = true;
+      document.removeEventListener('keydown',onKey);
+      // Der Seitenhintergrund bleibt gesperrt, solange noch ein Popup offen ist.
+      overlay.remove();
+      if(!document.querySelector('.modal-overlay')) document.body.style.overflow='';
+    }
+    function onKey(e){
+      if(e.key!=='Escape' || !isTopOverlay(overlay)) return;
+      e.preventDefault(); close();
+    }
+    modal.appendChild(el('div',{class:'modal-actions'},[
+      el('button',{class:'btn ghost',text:'Schließen',onclick:close})
+    ]));
+    overlay.addEventListener('click',(e)=>{ if(e.target===overlay) close(); });
+    document.addEventListener('keydown',onKey);
+    document.body.style.overflow='hidden';
+    document.body.appendChild(overlay);
+
+    // Inhalt nachladen – aufgeteilte Dateien setzt loadFileData wieder zusammen.
+    (async()=>{
+      try{
+        if(!isImageFile(f) && !isTextFile(f)){
+          if(closed) return;
+          body.innerHTML='';
+          body.appendChild(el('p',{class:'hg-sub',style:'margin:0;',
+            text:'Dieser Dateityp lässt sich hier nicht anzeigen. Über „Herunterladen“ '+
+                 'öffnest du ihn in der passenden App.'}));
+          return;
+        }
+        const b64 = await loadFileData(docId,fileId,f);
+        if(closed) return;
+        body.innerHTML='';
+        if(isImageFile(f)){
+          body.appendChild(el('img',{class:'fp-img',alt:name,src:'data:'+mime+';base64,'+b64}));
+          return;
+        }
+        let text = base64ToText(b64);
+        const gekuerzt = text.length > MAX_PREVIEW_CHARS;
+        if(gekuerzt) text = text.slice(0,MAX_PREVIEW_CHARS);
+        body.appendChild(isMarkdownFile(f) ? renderMarkdown(text)
+                                           : el('div',{class:'fp-text',text:text}));
+        if(gekuerzt){
+          body.appendChild(el('p',{class:'hg-sub',
+            text:'Nur der Anfang wird angezeigt – die vollständige Datei bekommst du '+
+                 'über „Herunterladen“.'}));
+        }
+      }catch(err){
+        console.error(err);
+        if(closed) return;
+        body.innerHTML='';
+        body.appendChild(el('p',{class:'hg-status err',
+          text:'Die Datei konnte nicht geladen werden. '+((err&&err.message)||describeError(err))}));
+      }
+    })();
+  }
+
   // ── Eine angehängte Datei als Zeile ───────────────────────
-  function buildFileRow(docId,fileId,f){
+  // opts.hideIdeaBadge → Kennzeichen der App-Idee weglassen (in der Idee selbst)
+  // opts.entryIdeaId   → App-Idee, zu der der Eintrag insgesamt gehört
+  // opts.ideaTitle     → Ideentext des Eintrags, für das Kennzeichen
+  // opts.hideDelete    → das ✕ weglassen (die Idee bietet eigene Knöpfe an)
+  // opts.actions       → (docId,fileId,f) ⇒ Liste zusätzlicher Knöpfe
+  function buildFileRow(docId,fileId,f,opts={}){
     const row = el('div',{class:'sf-file'});
     const mime = safeMime(f.mime,'application/octet-stream');
+    const zeigbar = isImageFile(f) || isTextFile(f);
 
     // Vorschau bevorzugt aus dem kleinen thumb-Feld: aufgeteilte Bilder haben
     // kein data-Feld mehr. Ältere Dateien ohne thumb nutzen weiter data.
@@ -3735,33 +4095,64 @@
     const previewMime = f.thumb ? 'image/jpeg' : mime;
     if(mime.indexOf('image/')===0 && previewData){
       row.appendChild(el('img',{class:'sf-thumb',alt:f.name||'Bild',
-        src:'data:'+previewMime+';base64,'+previewData}));
+        title:'Grosse Ansicht öffnen',style:'cursor:zoom-in;',
+        src:'data:'+previewMime+';base64,'+previewData,
+        onclick:()=>openFilePreview(docId,fileId,f)}));
     }
 
     const chunks = Number(f.chunks)||0;
-    row.appendChild(el('div',{class:'sf-file-name'},[
+    const nameBox = el('div',{class:'sf-file-name'},[
       el('div',{text:f.name||'Ohne Namen'}),
       el('div',{class:'sf-file-size',
-        text:fmtBytes(f.size)+(chunks>0 ? ' · '+chunks+' Teile' : '')})
-    ]));
+        // Bei Dateien ohne Vorschau steht der Typ dabei – sonst sieht man ihm
+        // ausser dem Namen nichts an.
+        text:fmtBytes(f.size)+(zeigbar ? '' : ' · '+mime)+(chunks>0 ? ' · '+chunks+' Teile' : '')})
+    ]);
+    // Das Kennzeichen steht schon am Eintrag – an der einzelnen Zeile wird es
+    // nur wiederholt, wenn es dort etwas anderes sagt: eine Datei aus einer
+    // fremden Idee oder eine, die aus dieser Idee genommen wurde.
+    if(!opts.hideIdeaBadge){
+      const dateiIdee   = String(f.appIdeaId||'');
+      const eintragIdee = String(opts.entryIdeaId||'');
+      if(dateiIdee && dateiIdee!==eintragIdee){
+        nameBox.appendChild(el('div',{class:'sf-badge',text:ideaBadgeText(opts.ideaTitle)}));
+      }else if(!dateiIdee && eintragIdee){
+        nameBox.appendChild(el('div',{class:'sf-badge off',text:'⊖ nicht mehr zugeordnet'}));
+      }
+    }
+    row.appendChild(nameBox);
 
     const actions = el('div',{class:'sf-file-actions'});
+    if(zeigbar){
+      actions.appendChild(el('button',{class:'pill-btn',type:'button',text:'Ansehen',
+        title:'Inhalt in der App anzeigen',onclick:()=>openFilePreview(docId,fileId,f)}));
+    }
     const dlBtn = el('button',{class:'pill-btn',type:'button',text:'Herunterladen'});
     dlBtn.addEventListener('click',()=>downloadFile(docId,fileId,f,dlBtn));
     actions.appendChild(dlBtn);
-    actions.appendChild(el('button',{class:'row-btn del',type:'button',title:'Datei löschen',
-      text:'✕',style:'opacity:.85;',onclick:async()=>{
-        if(!confirm('Die Datei „'+(f.name||'Ohne Namen')+'“ löschen?')) return;
-        try{ await deleteFileDoc(docId,fileId,f); }
-        catch(err){ console.error(err); alert('Konnte nicht gelöscht werden. '+describeError(err)); }
-      }}));
+    if(typeof opts.actions==='function'){
+      (opts.actions(docId,fileId,f)||[]).forEach(n=>{ if(n) actions.appendChild(n); });
+    }
+    if(!opts.hideDelete){
+      actions.appendChild(el('button',{class:'row-btn del',type:'button',title:'Datei löschen',
+        text:'✕',style:'opacity:.85;',onclick:async()=>{
+          if(!confirm('Die Datei „'+(f.name||'Ohne Namen')+'“ löschen?')) return;
+          try{
+            await deleteFileDoc(docId,fileId,f);
+            // War die Datei einer App-Idee zugeordnet, muss deren Zähler
+            // mitziehen – sonst bliebe am Knopf „Dateien“ ein Punkt stehen.
+            if(f.appIdeaId) await refreshIdeaLinkCount(docId,String(f.appIdeaId));
+          }
+          catch(err){ console.error(err); alert('Konnte nicht gelöscht werden. '+describeError(err)); }
+        }}));
+    }
     row.appendChild(actions);
     return row;
   }
 
   // Dateien nach Ordner gruppiert ausgeben. Lose Dateien stehen oben,
   // danach je Ordner eine Überschrift.
-  function paintFileList(container,docId,docs){
+  function paintFileList(container,docId,docs,opts={}){
     const groups = new Map();
     docs.forEach(d=>{
       const key = String((d.data && d.data.path) || '');
@@ -3777,7 +4168,7 @@
       if(key) container.appendChild(el('p',{class:'sf-folder',text:'📁 '+key}));
       groups.get(key)
         .sort((a,b)=>String(a.data.name||'').localeCompare(String(b.data.name||''),'de'))
-        .forEach(d=> container.appendChild(buildFileRow(docId,d.id,d.data)));
+        .forEach(d=> container.appendChild(buildFileRow(docId,d.id,d.data,opts)));
     });
   }
 
@@ -3829,9 +4220,12 @@
 
   // Firestore räumt Subcollections NICHT automatisch ab – die Dateien und
   // deren Teilstücke müssen deshalb ausdrücklich mit gelöscht werden.
-  async function deleteSavedFile(id,title){
+  async function deleteSavedFile(id,title,data){
+    const zurIdee = !!(data && data.appIdeaId);
     if(!confirm('Den Eintrag „'+((title||'').trim()||'Ohne Titel')+
-                '“ mit allen angehängten Dateien löschen?')) return;
+                '“ mit allen angehängten Dateien löschen?'+
+                (zurIdee ? '\n\nDiese Dateien gehören zu einer App-Idee – dort verschwinden '+
+                           'sie damit ebenfalls. Das lässt sich nicht rückgängig machen.' : ''))) return;
     try{
       const snap = await getDocs(filesSubRef(id));
       for(const d of snap.docs){
@@ -3841,11 +4235,247 @@
     }catch(err){ console.error(err); alert('Konnte nicht gelöscht werden. '+describeError(err)); }
   }
 
+  // ══════════════════════════════════════════════════════════
+  //  DATEIEN EINER APP-IDEE
+  //
+  //  Es gibt bewusst nur EINEN Datensatz je Datei. Dateien, die unter einer
+  //  App-Idee abgelegt werden, landen in einem ganz normalen Ablage-Eintrag
+  //  (savedFiles) und tauchen dadurch von selbst in der Kategorie „Dateien"
+  //  auf – es wird nichts kopiert und nichts doppelt gespeichert.
+  //
+  //  Die Zuordnung ist ein einziges Feld:
+  //    savedFiles/{id}                → appIdeaId, appIdeaTitle, linkedCount
+  //    savedFiles/{id}/files/{fileId} → appIdeaId
+  //
+  //  Massgeblich ist appIdeaId am Datei-Dokument. „Aus der Idee entfernen"
+  //  leert genau dieses Feld – die Datei selbst bleibt unangetastet in der
+  //  Ablage. „Endgültig löschen" löscht den Datensatz und damit überall.
+  //
+  //  Einträge und Dateien ohne diese Felder (der komplette Altbestand) laufen
+  //  unverändert weiter: gelesen wird überall defensiv, es gibt KEINE
+  //  Migration.
+  // ══════════════════════════════════════════════════════════
+  const IDEA_ENTRY_TITLE = 'Dateien zur App-Idee';
+
+  function ideaSnippet(text){
+    const t = String(text||'').replace(/\s+/g,' ').trim();
+    return t.length>70 ? t.slice(0,70)+'…' : t;
+  }
+  // Der Text einer App-Idee liegt hinter dem Zugangscode. In der Ablage wird
+  // er deshalb nur ausgeschrieben, wenn die Sitzung entsperrt ist – sonst
+  // bleibt es beim neutralen Kennzeichen.
+  function ideaBadgeText(title){
+    const t = String(title||'').trim();
+    return (codeEntsperrt && t) ? ('💡 App-Idee · '+t) : '💡 App-Idee';
+  }
+  function ideaHasFiles(ideaId){
+    const e = ideaEntriesCache.get(ideaId);
+    return !!(e && Number(e.linkedCount||0) > 0);
+  }
+
+  // Ablage-Eintrag einer Idee suchen. Bewusst über eine Abfrage statt über
+  // eine am Idee-Dokument gespeicherte ID: so kann keine verwaiste
+  // Verknüpfung zurückbleiben, wenn der Eintrag in der Kategorie „Dateien"
+  // gelöscht wird.
+  function ideaEntryQuery(ideaId){
+    return query(savedFilesRef, where('appIdeaId','==',ideaId));
+  }
+  async function ensureIdeaEntry(ideaId,ideaText){
+    const snap = await getDocs(ideaEntryQuery(ideaId));
+    if(!snap.empty) return snap.docs[0].id;
+    // Neue Einträge oben einsortieren (kleinster order-Wert = oben).
+    const minOrder = savedFilesCache.reduce((m,d)=>Math.min(m, d.order??0), 0);
+    const ref = await addDoc(savedFilesRef,{
+      title: IDEA_ENTRY_TITLE,
+      description: '',
+      appIdeaId: ideaId,
+      appIdeaTitle: ideaSnippet(ideaText),
+      linkedCount: 0,
+      order: minOrder-1,
+      createdAt: serverTimestamp()
+    });
+    return ref.id;
+  }
+
+  // Anzahl der noch verknüpften Dateien am Eintrag festhalten. getCountFromServer
+  // statt getDocs: das liest nur die Anzahl, nicht die (teils sehr grossen)
+  // Datei-Dokumente. Schlägt es fehl, ist das nur ein falscher Punkt am Knopf –
+  // kein Grund, die eigentliche Aktion scheitern zu lassen.
+  async function refreshIdeaLinkCount(entryId,ideaId){
+    if(!entryId || !ideaId) return;
+    try{
+      const snap = await getCountFromServer(query(filesSubRef(entryId), where('appIdeaId','==',ideaId)));
+      await updateDoc(doc(db,'savedFiles',entryId),{linkedCount: snap.data().count});
+    }catch(err){ console.error(err); }
+  }
+
+  // Beim Löschen einer App-Idee bleiben die Dateien erhalten – sie verlieren
+  // nur ihre Zuordnung. Sonst wäre die zentrale Ablage keine Ablage mehr.
+  async function unlinkIdeaFiles(ideaId){
+    const entries = await getDocs(ideaEntryQuery(ideaId));
+    for(const e of entries.docs){
+      const files = await getDocs(query(filesSubRef(e.id), where('appIdeaId','==',ideaId)));
+      for(let i=0;i<files.docs.length;i+=400){   // ein writeBatch fasst max. 500 Schreibvorgänge
+        const batch = writeBatch(db);
+        files.docs.slice(i,i+400).forEach(d=>batch.update(d.ref,{appIdeaId:''}));
+        await batch.commit();
+      }
+      const alt = e.data()||{};
+      await updateDoc(doc(db,'savedFiles',e.id),{
+        appIdeaId:'',
+        linkedCount:0,
+        // Den Titel nur anfassen, solange er noch der automatisch vergebene ist.
+        title:(String(alt.title||'')===IDEA_ENTRY_TITLE)
+          ? 'Dateien einer gelöschten App-Idee' : String(alt.title||''),
+        updatedAt: serverTimestamp()
+      });
+    }
+  }
+
+  // ── Popup „Dateien" einer App-Idee ────────────────────────
+  // Gleiche Bauart wie Konzept und Prompt: Pill-Button ⇒ Popup.
+  function openIdeaFilesModal(ideaId,ideaData){
+    const overlay = el('div',{class:'modal-overlay'});
+    const modal   = el('div',{class:'modal wide'});
+    overlay.appendChild(modal);
+
+    const snippet = ideaSnippet(ideaData && ideaData.text);
+    modal.appendChild(el('div',{class:'cp-head'},[ el('h2',{text:'Dateien'}) ]));
+    modal.appendChild(el('div',{class:'cp-meta',text:'Zur Idee: '+(snippet||'(ohne Text)')}));
+    modal.appendChild(el('p',{class:'hg-hint',
+      text:'Diese Dateien liegen in derselben Ablage wie alles unter „Dateien“ – dort '+
+           'erscheinen sie automatisch mit, gekennzeichnet als App-Idee.'}));
+
+    const listWrap = el('div');
+    modal.appendChild(listWrap);
+
+    let entryId = undefined;      // undefined = noch nicht geladen, null = keiner da
+    let unsubEntry = null, unsubFiles = null;
+    let closed = false;
+
+    function stopFiles(){ if(unsubFiles){ try{ unsubFiles(); }catch(e){} unsubFiles=null; } }
+    function stopEntry(){ if(unsubEntry){ try{ unsubEntry(); }catch(e){} unsubEntry=null; } }
+    function close(){
+      closed = true;
+      stopFiles(); stopEntry();
+      document.removeEventListener('keydown',onKey);
+      overlay.remove();
+      if(!document.querySelector('.modal-overlay')) document.body.style.overflow='';
+    }
+    function onKey(e){
+      if(e.key!=='Escape' || !isTopOverlay(overlay)) return;
+      e.preventDefault(); close();
+    }
+
+    // Auswahl + Speichern: dieselbe Logik wie in der Kategorie „Dateien".
+    // Der Ablage-Eintrag entsteht erst beim ersten Speichern – eine Idee ohne
+    // Dateien hinterlässt also keinen leeren Eintrag.
+    modal.appendChild(buildFileAdder(()=>ensureIdeaEntry(ideaId, ideaData && ideaData.text),{
+      label:'Dateien zu dieser Idee hinzufügen',
+      extra:{appIdeaId:ideaId},
+      onSaved:(res,ziel)=>refreshIdeaLinkCount(ziel,ideaId)
+    }));
+
+    modal.appendChild(el('div',{class:'modal-actions'},[
+      el('button',{class:'btn ghost',text:'Schließen',onclick:close})
+    ]));
+    overlay.addEventListener('click',(e)=>{ if(e.target===overlay) close(); });
+    document.addEventListener('keydown',onKey);
+    document.body.style.overflow='hidden';
+    document.body.appendChild(overlay);
+    // Beim Routenwechsel ebenfalls abmelden – doppeltes Abmelden schadet nicht.
+    track(()=>{ stopFiles(); stopEntry(); });
+
+    function paintLeer(){
+      listWrap.innerHTML='';
+      listWrap.appendChild(el('p',{class:'empty',style:'padding:8px 0;',
+        text:'Noch keine Dateien bei dieser Idee.'}));
+    }
+    function paintFehler(err){
+      console.error(err);
+      listWrap.innerHTML='';
+      listWrap.appendChild(el('p',{class:'hg-status err',text:describeError(err)}));
+    }
+
+    // Die beiden Aktionen bewusst getrennt und unterschiedlich beschriftet:
+    // „Entfernen" löst nur die Zuordnung, „Endgültig löschen" wirft die Datei
+    // überall weg.
+    function dateiAktionen(dId,fId,f){
+      const entfernen = el('button',{class:'pill-btn',type:'button',
+        title:'Nur die Zuordnung lösen – die Datei bleibt in „Dateien“',
+        text:'⊖ Aus Idee entfernen'});
+      entfernen.addEventListener('click',async()=>{
+        entfernen.disabled = true;
+        try{
+          await updateDoc(doc(db,'savedFiles',dId,'files',fId),{appIdeaId:''});
+          await refreshIdeaLinkCount(dId,ideaId);
+        }catch(err){
+          console.error(err);
+          alert('Konnte nicht entfernt werden. '+describeError(err));
+          entfernen.disabled = false;
+        }
+      });
+
+      const loeschen = el('button',{class:'pill-btn danger',type:'button',
+        title:'Die Datei überall löschen – auch in der Kategorie „Dateien“',
+        text:'🗑 Endgültig löschen'});
+      loeschen.addEventListener('click',async()=>{
+        if(!confirm('„'+(f.name||'Datei')+'“ endgültig löschen?\n\n'+
+          'Die Datei verschwindet damit AUCH aus der Kategorie „Dateien“. '+
+          'Das lässt sich nicht rückgängig machen.\n\n'+
+          'Soll sie nur hier weg, stattdessen „Aus Idee entfernen“ wählen.')) return;
+        loeschen.disabled = true;
+        try{
+          await deleteFileDoc(dId,fId,f);
+          await refreshIdeaLinkCount(dId,ideaId);
+        }catch(err){
+          console.error(err);
+          alert('Konnte nicht gelöscht werden. '+describeError(err));
+          loeschen.disabled = false;
+        }
+      });
+      return [entfernen, loeschen];
+    }
+
+    function startFiles(id){
+      unsubFiles = onSnapshot(filesSubRef(id),(snap)=>{
+        if(closed) return;
+        // Nur die Dateien dieser Idee. Wer „Aus Idee entfernen" wählt, bleibt
+        // im Eintrag stehen und verschwindet nur hier.
+        const docs = snap.docs.map(d=>({id:d.id, data:d.data()}))
+                              .filter(d=> String((d.data||{}).appIdeaId||'')===ideaId);
+        listWrap.innerHTML='';
+        if(!docs.length){ paintLeer(); return; }
+        paintFileList(listWrap, id, docs, {
+          hideIdeaBadge:true,     // hier ist die Zugehörigkeit ohnehin klar
+          hideDelete:true,        // stattdessen die beiden eindeutigen Knöpfe
+          actions:dateiAktionen
+        });
+      },paintFehler);
+    }
+
+    listWrap.appendChild(el('p',{class:'hg-sub',style:'margin:0;',text:'Dateien werden geladen …'}));
+    unsubEntry = onSnapshot(ideaEntryQuery(ideaId),(snap)=>{
+      if(closed) return;
+      const id = snap.empty ? null : snap.docs[0].id;
+      if(id===entryId) return;      // unverändert – der Datei-Listener läuft weiter
+      entryId = id;
+      stopFiles();
+      if(!entryId){ paintLeer(); return; }   // Eintrag in „Dateien" gelöscht ⇒ hier leer
+      startFiles(entryId);
+    },paintFehler);
+  }
+
   function buildSavedFileItem(id,data,index,total){
     const item = el('div',{class:'sf-item'});
     const titleDiv = el('div',{class:'sf-title',text:(data.title||'').trim() || 'Ohne Titel'});
     const descDiv  = (data.description||'').trim()
       ? el('div',{class:'sf-desc',text:data.description}) : null;
+    // Gehört der Eintrag zu einer App-Idee, steht das direkt unter dem Titel.
+    const ideaBadge = data.appIdeaId
+      ? el('div',{class:'sf-title-badge'},[
+          el('span',{class:'sf-badge',text:ideaBadgeText(data.appIdeaTitle)})
+        ]) : null;
 
     // Anhänge werden erst beim Aufklappen geladen – das hält die Liste schnell.
     const box    = el('div',{class:'sf-box',style:'display:none;'});
@@ -3879,7 +4509,8 @@
             text:'Noch keine Dateien angehängt.'}));
           return;
         }
-        paintFileList(listWrap, id, snap.docs.map(d=>({id:d.id, data:d.data()})));
+        paintFileList(listWrap, id, snap.docs.map(d=>({id:d.id, data:d.data()})),
+          {ideaTitle:data.appIdeaTitle, entryIdeaId:data.appIdeaId});
       },(err)=>{
         console.error(err);
         listWrap.innerHTML='';
@@ -3908,7 +4539,7 @@
     actions.appendChild(editBtn); actions.appendChild(delBtn);
     foot.appendChild(actions);
 
-    delBtn.addEventListener('click',()=>{ deleteSavedFile(id,data.title); });
+    delBtn.addEventListener('click',()=>{ deleteSavedFile(id,data.title,data); });
 
     editBtn.addEventListener('click',()=>{
       closeBox();                       // Listener der Anhänge nicht verwaisen lassen
@@ -3947,6 +4578,7 @@
       item.innerHTML='';
       if(editBox){ item.appendChild(editBox); return; }
       item.appendChild(titleDiv);
+      if(ideaBadge) item.appendChild(ideaBadge);
       if(descDiv) item.appendChild(descDiv);
       item.appendChild(toggle);
       item.appendChild(box);
